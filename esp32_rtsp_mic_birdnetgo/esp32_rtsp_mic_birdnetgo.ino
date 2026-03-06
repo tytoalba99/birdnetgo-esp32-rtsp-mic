@@ -15,7 +15,7 @@
 #include "WebUI.h"
 
 // ================== SETTINGS (ESP32 RTSP Mic for BirdNET-Go) ==================
-#define FW_VERSION "1.6.0"
+#define FW_VERSION "1.6.0-le.1"
 // Expose FW version as a global C string for WebUI/API
 const char* FW_VERSION_STR = FW_VERSION;
 // Build timestamp for diagnostics (compile time)
@@ -199,11 +199,27 @@ void mqttRequestReconnect(bool forceDiscovery);
 void mqttPublishDiscoverySoon();
 void enterIdleMode();
 void exitIdleMode();
+void checkAdaptiveTxPower();
 bool mqttPublishState(bool force);
 
 // -- WiFi TX power (configurable)
 float wifiTxPowerDbm = DEFAULT_WIFI_TX_DBM;
 wifi_power_t currentWifiPowerLevel = WIFI_POWER_19_5dBm;
+
+// -- Adaptive WiFi TX Power
+static const float ADAPT_TX_STEPS[] = {5.0f, 7.0f, 8.5f, 11.0f, 13.0f, 15.0f, 17.0f, 18.5f};
+extern const int   ADAPT_TX_STEPS_COUNT = (int)(sizeof(ADAPT_TX_STEPS) / sizeof(ADAPT_TX_STEPS[0]));
+static const float ADAPT_TX_RSSI_GOOD   = -65.0f;    // > this: lower TX after timer
+static const float ADAPT_TX_RSSI_BAD    = -78.0f;    // < this: raise to max immediately
+static const unsigned long ADAPT_TX_SAMPLE_MS    = 30000UL;   // RSSI sampling period
+static const unsigned long ADAPT_TX_STEP_DOWN_MS = 120000UL;  // 2 min in good zone before step down
+bool wifiAdaptTxEnabled   = false;
+float wifiLastGoodDbm     = 18.5f;
+int   adaptTxStepIdx      = 7;       // index into ADAPT_TX_STEPS (7 = 18.5 dBm)
+unsigned long adaptTxGoodSinceMs  = 0;
+unsigned long adaptTxLastSampleMs = 0;
+RTC_DATA_ATTR float rtcAdaptTxLastGoodDbm = 18.5f; // survives deep sleep
+RTC_DATA_ATTR bool  rtcAdaptTxValid       = false;
 
 // -- RTSP connect/PLAY statistics
 unsigned long lastRtspClientConnectMs = 0;
@@ -507,7 +523,8 @@ static String mqttBuildStateJson() {
     json += "\"mdns_enabled\":" + String(mdnsEnabled ? "true" : "false") + ",";
     json += "\"time_synced\":" + String(timeSynced ? "true" : "false") + ",";
     json += "\"idle_mode\":" + String(idleModeActive ? "true" : "false") + ",";
-    json += "\"cpu_freq_mhz\":" + String(getCpuFrequencyMhz());
+    json += "\"cpu_freq_mhz\":" + String(getCpuFrequencyMhz()) + ",";
+    json += "\"wifi_tx_adaptive\":" + String(wifiAdaptTxEnabled ? "true" : "false");
     json += "}";
     return json;
 }
@@ -603,6 +620,12 @@ static bool mqttPublishDiscovery() {
 
     p = "{\"name\":\"CPU Frequency\",\"uniq_id\":\"" + mqttDeviceId + "_cpu_freq_mhz\",\"stat_t\":\"" + st + "\",\"val_tpl\":\"{{ value_json.cpu_freq_mhz }}\",\"unit_of_meas\":\"MHz\",\"stat_cla\":\"measurement\",\"ent_cat\":\"diagnostic\",\"ic\":\"mdi:cpu-32-bit\",\"avty_t\":\"" + av + "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}";
     ok &= mqttPublishDiscoveryConfig("sensor", "cpu_freq_mhz", p);
+
+    p = "{\"name\":\"WiFi TX Adaptive\",\"uniq_id\":\"" + mqttDeviceId + "_wifi_tx_adaptive\",\"stat_t\":\"" + st + "\",\"val_tpl\":\"{{ 'ON' if value_json.wifi_tx_adaptive else 'OFF' }}\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"ic\":\"mdi:wifi-strength-outline\",\"ent_cat\":\"diagnostic\",\"avty_t\":\"" + av + "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}";
+    ok &= mqttPublishDiscoveryConfig("binary_sensor", "wifi_tx_adaptive", p);
+
+    p = "{\"name\":\"WiFi TX Power\",\"uniq_id\":\"" + mqttDeviceId + "_wifi_tx_dbm\",\"stat_t\":\"" + st + "\",\"val_tpl\":\"{{ value_json.wifi_tx_dbm }}\",\"unit_of_meas\":\"dBm\",\"stat_cla\":\"measurement\",\"ent_cat\":\"diagnostic\",\"ic\":\"mdi:wifi-strength-4\",\"avty_t\":\"" + av + "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}";
+    ok &= mqttPublishDiscoveryConfig("sensor", "wifi_tx_dbm", p);
 
     if (ok) {
         mqttDiscoveryPublished = true;
@@ -1416,6 +1439,22 @@ void loadAudioSettings() {
     autoThresholdEnabled = audioPrefs.getBool("thrAuto", true);
     cpuFrequencyMhz = audioPrefs.getUChar("cpuFreq", 160);
     wifiTxPowerDbm = audioPrefs.getFloat("wifiTxDbm", DEFAULT_WIFI_TX_DBM);
+    wifiAdaptTxEnabled = audioPrefs.getBool("wifiAdaptTx", false);
+    wifiLastGoodDbm    = audioPrefs.getFloat("wifiLastGoodDbm", 18.5f);
+    if (wifiAdaptTxEnabled) {
+        if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER && rtcAdaptTxValid &&
+            rtcAdaptTxLastGoodDbm >= ADAPT_TX_STEPS[0] &&
+            rtcAdaptTxLastGoodDbm <= ADAPT_TX_STEPS[ADAPT_TX_STEPS_COUNT - 1]) {
+            wifiTxPowerDbm = rtcAdaptTxLastGoodDbm;
+            adaptTxStepIdx = ADAPT_TX_STEPS_COUNT - 1;
+            for (int i = 0; i < ADAPT_TX_STEPS_COUNT; i++) {
+                if (ADAPT_TX_STEPS[i] >= wifiTxPowerDbm - 0.1f) { adaptTxStepIdx = i; break; }
+            }
+        } else {
+            wifiTxPowerDbm = 18.5f;
+            adaptTxStepIdx = ADAPT_TX_STEPS_COUNT - 1;
+        }
+    }
     highpassEnabled = audioPrefs.getBool("hpEnable", DEFAULT_HPF_ENABLED);
     highpassCutoffHz = (uint16_t)audioPrefs.getUInt("hpCutoff", DEFAULT_HPF_CUTOFF_HZ);
     overheatProtectionEnabled = audioPrefs.getBool("ohEnable", DEFAULT_OVERHEAT_PROTECTION);
@@ -1462,10 +1501,13 @@ void loadAudioSettings() {
     }
     // Log the configured TX dBm (not the current enum), snapped for clarity
     float txShown = wifiPowerLevelToDbm(pickWifiPowerLevel(wifiTxPowerDbm));
+    String txLabel = wifiAdaptTxEnabled
+        ? "Auto(" + String(txShown, 1) + "dBm)"
+        : String(txShown, 1) + "dBm";
     simplePrintln("Loaded settings: Rate=" + String(currentSampleRate) +
                   ", Gain=" + String(currentGainFactor, 1) +
                   ", Buffer=" + String(currentBufferSize) +
-                  ", WiFiTX=" + String(txShown, 1) + "dBm" +
+                  ", WiFiTX=" + txLabel +
                   ", shiftBits=" + String(i2sShiftBits) +
                   ", HPF=" + String(highpassEnabled?"on":"off") +
                   ", HPFcut=" + String(highpassCutoffHz) + "Hz");
@@ -1487,6 +1529,8 @@ void saveAudioSettings() {
     audioPrefs.putBool("thrAuto", autoThresholdEnabled);
     audioPrefs.putUChar("cpuFreq", cpuFrequencyMhz);
     audioPrefs.putFloat("wifiTxDbm", wifiTxPowerDbm);
+    audioPrefs.putBool("wifiAdaptTx", wifiAdaptTxEnabled);
+    audioPrefs.putFloat("wifiLastGoodDbm", wifiLastGoodDbm);
     audioPrefs.putBool("hpEnable", highpassEnabled);
     audioPrefs.putUInt("hpCutoff", (uint32_t)highpassCutoffHz);
     audioPrefs.putBool("ohEnable", overheatProtectionEnabled);
@@ -1579,6 +1623,11 @@ void resetToDefaultSettings() {
     performanceCheckInterval = 15;
     cpuFrequencyMhz = 160;
     wifiTxPowerDbm = DEFAULT_WIFI_TX_DBM;
+    wifiAdaptTxEnabled   = false;
+    wifiLastGoodDbm      = 18.5f;
+    adaptTxStepIdx       = ADAPT_TX_STEPS_COUNT - 1;
+    adaptTxGoodSinceMs   = 0;
+    adaptTxLastSampleMs  = 0;
     highpassEnabled = DEFAULT_HPF_ENABLED;
     highpassCutoffHz = DEFAULT_HPF_CUTOFF_HZ;
     overheatProtectionEnabled = DEFAULT_OVERHEAT_PROTECTION;
@@ -1601,6 +1650,7 @@ void resetToDefaultSettings() {
     deepSleepOutsideSinceMs = 0;
     deepSleepStatusCode = "disabled";
     deepSleepNextSleepSec = 0;
+    timeSyncEnabled = true;
     timeSynced = false;
     lastTimeSyncAttempt = 0;
     lastTimeSyncSuccess = 0;
@@ -2016,6 +2066,9 @@ void exitIdleMode() {
     // 2. Restore CPU to user-configured frequency
     setCpuFrequencyMhz(cpuFrequencyMhz);
     // 3. Re-allocate buffers and restart I2S
+    // Free first in case restartI2S() was called while in idle mode (e.g., audio params changed via UI)
+    if (i2s_32bit_buffer) { free(i2s_32bit_buffer); i2s_32bit_buffer = nullptr; }
+    if (i2s_16bit_buffer) { free(i2s_16bit_buffer); i2s_16bit_buffer = nullptr; }
     i2s_32bit_buffer = (int32_t*)malloc(currentBufferSize * sizeof(int32_t));
     i2s_16bit_buffer = (int16_t*)malloc(currentBufferSize * sizeof(int16_t));
     if (!i2s_32bit_buffer || !i2s_16bit_buffer) {
@@ -2025,6 +2078,55 @@ void exitIdleMode() {
     setup_i2s_driver();
     updateHighpassCoeffs();
     simplePrintln("Active mode: I2S init, CPU->" + String(cpuFrequencyMhz) + "MHz, WiFi modem sleep OFF");
+}
+
+// ============================================================
+// LOW POWER — ADAPTIVE TX POWER
+// Gradually lowers WiFi TX power while RSSI is good; raises to max immediately on poor signal.
+// Called every ~30 s from loop(). Active only when wifiAdaptTxEnabled = true and not in idle mode.
+// ============================================================
+void checkAdaptiveTxPower() {
+    if (!wifiAdaptTxEnabled || idleModeActive) return;
+    if (WiFi.status() != WL_CONNECTED) return;
+    unsigned long now = millis();
+    if ((now - adaptTxLastSampleMs) < ADAPT_TX_SAMPLE_MS) return;
+    adaptTxLastSampleMs = now;
+
+    int rssi = WiFi.RSSI();
+
+    if (rssi < (int)ADAPT_TX_RSSI_BAD) {
+        // Poor signal: raise to max immediately
+        if (adaptTxStepIdx < ADAPT_TX_STEPS_COUNT - 1) {
+            adaptTxStepIdx = ADAPT_TX_STEPS_COUNT - 1;
+            wifiTxPowerDbm = ADAPT_TX_STEPS[adaptTxStepIdx];
+            applyWifiTxPower(false);
+            simplePrintln("Adaptive TX: RSSI=" + String(rssi) + " dBm (poor) -> raised to " +
+                          String(wifiTxPowerDbm, 1) + " dBm");
+            mqttPublishState(true);
+        }
+        adaptTxGoodSinceMs = 0;
+    } else if (rssi > (int)ADAPT_TX_RSSI_GOOD) {
+        // Good signal: lower one step after 2 min
+        if (adaptTxGoodSinceMs == 0) adaptTxGoodSinceMs = now;
+        if (adaptTxStepIdx > 0 && (now - adaptTxGoodSinceMs) >= ADAPT_TX_STEP_DOWN_MS) {
+            adaptTxStepIdx--;
+            adaptTxGoodSinceMs = now; // reset timer for next step
+            wifiTxPowerDbm = ADAPT_TX_STEPS[adaptTxStepIdx];
+            applyWifiTxPower(false);
+            wifiLastGoodDbm = ADAPT_TX_STEPS[adaptTxStepIdx + 1]; // previous step was confirmed good
+            rtcAdaptTxLastGoodDbm = wifiLastGoodDbm;
+            rtcAdaptTxValid = true;
+            simplePrintln("Adaptive TX: RSSI=" + String(rssi) + " dBm (good) -> lowered to " +
+                          String(wifiTxPowerDbm, 1) + " dBm");
+            mqttPublishState(true);
+        }
+    } else {
+        // Comfort zone (-78 to -65 dBm): maintain current level, reset down-timer
+        adaptTxGoodSinceMs = 0;
+        wifiLastGoodDbm = ADAPT_TX_STEPS[adaptTxStepIdx];
+        rtcAdaptTxLastGoodDbm = wifiLastGoodDbm;
+        rtcAdaptTxValid = true;
+    }
 }
 
 void setup() {
@@ -2061,9 +2163,6 @@ void setup() {
         ESP.restart();
     }
 
-    // WiFi optimization for stable streaming
-    WiFi.setSleep(false);
-
     WiFiManager wm;
     wm.setConnectTimeout(60);
     wm.setConfigPortalTimeout(180);
@@ -2071,6 +2170,10 @@ void setup() {
         simplePrintln("WiFi failed, restarting...");
         ESP.restart();
     }
+
+    // Disable WiFi modem sleep after connect — must be applied AFTER WiFiManager because
+    // its internal WiFi.mode() transitions reset the power save setting to the IDF default.
+    WiFi.setSleep(false);
 
     simplePrintln("WiFi connected: " + WiFi.localIP().toString());
 
@@ -2186,6 +2289,7 @@ void loop() {
 
     if (millis() - lastWiFiCheck > 30000) { // 30 s
         checkWiFiHealth(); // without TX power log spam
+        checkAdaptiveTxPower();
         lastWiFiCheck = millis();
     }
 
