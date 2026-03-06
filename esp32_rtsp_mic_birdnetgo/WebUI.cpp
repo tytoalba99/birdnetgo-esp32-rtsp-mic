@@ -57,6 +57,11 @@ extern bool overheatSensorFault;
 extern float lastTemperatureC;
 extern bool lastTemperatureValid;
 extern bool overheatLatched;
+extern bool wifiAdaptTxEnabled;
+extern int  adaptTxStepIdx;
+extern const int ADAPT_TX_STEPS_COUNT;
+extern unsigned long adaptTxGoodSinceMs;
+extern unsigned long adaptTxLastSampleMs;
 
 // Local helper: snap requested Wi‑Fi TX power (dBm) to nearest supported step
 static float snapWifiTxDbm(float dbm) {
@@ -77,6 +82,7 @@ static const char* UI_MUTATION_HEADER = "X-ESP32MIC-CSRF";
 static const char* UI_MUTATION_TOKEN = "1";
 
 // Helper functions in main
+extern void simplePrintln(String message);
 extern float wifiPowerLevelToDbm(wifi_power_t lvl);
 extern String formatUptime(unsigned long seconds);
 extern String formatSince(unsigned long eventMs);
@@ -215,6 +221,7 @@ static void httpStatus() {
     json += "\"stream_url_mdns\":\"rtsp://" + String(MDNS_HOSTNAME) + ".local:8554/audio\",";
     json += "\"wifi_rssi\":" + String(WiFi.RSSI()) + ",";
     json += "\"wifi_tx_dbm\":" + String(wifiPowerLevelToDbm(currentWifiPowerLevel),1) + ",";
+    json += "\"wifi_tx_adaptive\":" + String(wifiAdaptTxEnabled?"true":"false") + ",";
     json += "\"free_heap_kb\":" + String(ESP.getFreeHeap()/1024) + ",";
     json += "\"min_free_heap_kb\":" + String(minFreeHeap/1024) + ",";
     json += "\"uptime\":\"" + uptimeStr + "\",";
@@ -331,9 +338,11 @@ static void httpThermalClear() {
         overheatLastReason = String("Thermal latch cleared manually.");
         overheatLastTimestamp = String("");
         if (!rtspServerEnabled) {
+            exitIdleMode();
             rtspServer.begin();
             rtspServer.setNoDelay(true);
             rtspServerEnabled = true;
+            mqttPublishState(true);
         }
         saveAudioSettings();
         webui_pushLog(F("UI action: thermal_latch_clear"));
@@ -537,7 +546,28 @@ static void httpSet() {
     else if (key == "wifi_tx") {
         handled = true;
         float v;
-        if (argToFloat(v) && v >= -1.0f && v <= 19.5f) { extern float wifiTxPowerDbm; wifiTxPowerDbm = snapWifiTxDbm(v); applyWifiTxPower(true); saveAudioSettings(); applied = true; }
+        if (argToFloat(v)) {
+            extern float wifiTxPowerDbm;
+            if (fabsf(v + 2.0f) < 0.01f) {
+                // -2.0 sentinel = enable adaptive mode
+                wifiAdaptTxEnabled = true;
+                wifiTxPowerDbm = 18.5f;
+                adaptTxStepIdx = ADAPT_TX_STEPS_COUNT - 1;
+                adaptTxGoodSinceMs = 0;
+                adaptTxLastSampleMs = 0;
+                applyWifiTxPower(false);
+                simplePrintln("Adaptive TX enabled: starting at 18.5 dBm, RSSI thresholds -65/-78 dBm");
+                saveAudioSettings();
+                applied = true;
+            } else if (v >= -1.0f && v <= 19.5f) {
+                wifiAdaptTxEnabled = false;
+                wifiTxPowerDbm = snapWifiTxDbm(v);
+                applyWifiTxPower(false);
+                simplePrintln("Adaptive TX disabled: TX fixed at " + String(wifiTxPowerDbm, 1) + " dBm");
+                saveAudioSettings();
+                applied = true;
+            }
+        }
     }
     else if (key == "auto_recovery") {
         handled = true;
