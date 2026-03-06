@@ -7,7 +7,7 @@
 ESP32-C6 + I2S MEMS microphone streamer that exposes a **mono 16-bit PCM** audio stream over
 **RTSP**, designed as a simple network mic for **BirdNET-Go**.
 
-- Latest firmware: **v1.6.0** (2026-02-13)
+- Latest firmware: **v1.6.0-le.1** (2026-03-06)
 - Target firmware: `esp32_rtsp_mic_birdnetgo` (Web UI + JSON API)
 - Changelog: `esp32_rtsp_mic_birdnetgo/CHANGELOG.md`
 - One-click web flasher (recommended): **https://esp32mic.msmeteo.cz**
@@ -50,7 +50,7 @@ Tips:
 
 If VLC/ffplay works, BirdNET-Go will typically work too (just use the same RTSP URL as your input).
 
-## Highlights (v1.6.0)
+## Highlights (v1.6.0-le.1)
 
 - Web UI (English) on port **80** with live status, logs, and controls
 - JSON API for automation
@@ -73,6 +73,8 @@ If VLC/ffplay works, BirdNET-Go will typically work too (just use the same RTSP 
 - Thermal protection with latch + acknowledge
 - High-pass filter (HPF) configurable (reduce rumble)
 - RTSP keep-alive (`GET_PARAMETER`), single client
+- **[New] RTSP OFF Idle Mode:** when RTSP server is stopped, I2S is shut down, CPU drops to 80 MHz, and Wi-Fi modem sleep (`MIN_MODEM`) is activated — Web UI and MQTT remain responsive; full state is restored on server start
+- **[New] Adaptive Wi-Fi TX Power:** optional mode that automatically adjusts TX power (5–18.5 dBm) based on measured RSSI every 30 s — backs off when signal is excellent (> -65 dBm), restores max power immediately when signal is poor (< -78 dBm); current level shown in status and MQTT (`wifi_tx_dbm`, `wifi_tx_adaptive`)
 
 Web UI screenshot:
 
