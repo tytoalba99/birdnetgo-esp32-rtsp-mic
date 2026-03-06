@@ -89,6 +89,7 @@ int16_t* i2s_16bit_buffer = nullptr;
 unsigned long audioPacketsSent = 0;
 unsigned long lastStatsReset = 0;
 bool rtspServerEnabled = true;
+bool idleModeActive = false;  // true when RTSP server is OFF and device is in low-power idle
 
 // -- Audio parameters (runtime configurable)
 uint32_t currentSampleRate = DEFAULT_SAMPLE_RATE;
@@ -196,6 +197,9 @@ void simplePrintln(String message);
 void scheduleReboot(bool factoryReset, uint32_t delayMs);
 void mqttRequestReconnect(bool forceDiscovery);
 void mqttPublishDiscoverySoon();
+void enterIdleMode();
+void exitIdleMode();
+bool mqttPublishState(bool force);
 
 // -- WiFi TX power (configurable)
 float wifiTxPowerDbm = DEFAULT_WIFI_TX_DBM;
@@ -501,7 +505,9 @@ static String mqttBuildStateJson() {
     json += "\"max_temperature_c\":" + String(maxTemperature, 1) + ",";
     json += "\"overheat_latched\":" + String(overheatLatched ? "true" : "false") + ",";
     json += "\"mdns_enabled\":" + String(mdnsEnabled ? "true" : "false") + ",";
-    json += "\"time_synced\":" + String(timeSynced ? "true" : "false");
+    json += "\"time_synced\":" + String(timeSynced ? "true" : "false") + ",";
+    json += "\"idle_mode\":" + String(idleModeActive ? "true" : "false") + ",";
+    json += "\"cpu_freq_mhz\":" + String(getCpuFrequencyMhz());
     json += "}";
     return json;
 }
@@ -511,7 +517,7 @@ static bool mqttPublishDiscoveryConfig(const String &component, const String &ob
     return mqttClient.publish(topic.c_str(), payload.c_str(), true);
 }
 
-static bool mqttPublishState(bool force) {
+bool mqttPublishState(bool force) {
     if (!mqttClient.connected()) return false;
     unsigned long now = millis();
     unsigned long intervalMs = (unsigned long)mqttPublishIntervalSec * 1000UL;
@@ -592,6 +598,12 @@ static bool mqttPublishDiscovery() {
     p = "{\"name\":\"Reboot Device\",\"uniq_id\":\"" + mqttDeviceId + "_reboot\",\"cmd_t\":\"" + cmdReboot + "\",\"pl_prs\":\"PRESS\",\"ent_cat\":\"config\",\"avty_t\":\"" + av + "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}";
     ok &= mqttPublishDiscoveryConfig("button", "reboot", p);
 
+    p = "{\"name\":\"Idle Mode\",\"uniq_id\":\"" + mqttDeviceId + "_idle_mode\",\"stat_t\":\"" + st + "\",\"val_tpl\":\"{{ 'ON' if value_json.idle_mode else 'OFF' }}\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"ic\":\"mdi:sleep\",\"ent_cat\":\"diagnostic\",\"avty_t\":\"" + av + "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}";
+    ok &= mqttPublishDiscoveryConfig("binary_sensor", "idle_mode", p);
+
+    p = "{\"name\":\"CPU Frequency\",\"uniq_id\":\"" + mqttDeviceId + "_cpu_freq_mhz\",\"stat_t\":\"" + st + "\",\"val_tpl\":\"{{ value_json.cpu_freq_mhz }}\",\"unit_of_meas\":\"MHz\",\"stat_cla\":\"measurement\",\"ent_cat\":\"diagnostic\",\"ic\":\"mdi:cpu-32-bit\",\"avty_t\":\"" + av + "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}";
+    ok &= mqttPublishDiscoveryConfig("sensor", "cpu_freq_mhz", p);
+
     if (ok) {
         mqttDiscoveryPublished = true;
         mqttForceDiscovery = false;
@@ -613,6 +625,7 @@ static void mqttMessageCallback(char* topic, byte* payload, unsigned int length)
             if (overheatLatched) {
                 simplePrintln("MQTT command ignored: RTSP ON blocked by thermal latch.");
             } else if (!rtspServerEnabled) {
+                exitIdleMode();
                 rtspServer.begin();
                 rtspServer.setNoDelay(true);
                 rtspServerEnabled = true;
@@ -624,6 +637,7 @@ static void mqttMessageCallback(char* topic, byte* payload, unsigned int length)
             isStreaming = false;
             rtspServer.stop();
             simplePrintln("MQTT command: RTSP server disabled.");
+            enterIdleMode();
         }
         mqttPublishState(true);
         return;
@@ -998,12 +1012,14 @@ void checkStreamSchedule() {
                               formatClockHHMM(streamScheduleStopMin) +
                               ". RTSP server paused.");
             }
+            enterIdleMode();
             mqttPublishState(true);
         }
     } else if (transitioned) {
         if (overheatLatched) {
             simplePrintln("Stream schedule: window opened, but thermal latch keeps RTSP paused.");
         } else if (!rtspServerEnabled) {
+            exitIdleMode();
             rtspServer.begin();
             rtspServer.setNoDelay(true);
             rtspServerEnabled = true;
@@ -1119,6 +1135,8 @@ void checkDeepSleepSchedule() {
     }
     lastStreamStopReason = "Deep sleep outside stream schedule";
     lastStreamStopMs = millis();
+    // Ensure WiFi modem is fully awake for reliable pre-sleep MQTT publish
+    if (idleModeActive) WiFi.setSleep(WIFI_PS_NONE);
     mqttPublishState(true);
     delay(40);
 
@@ -1277,6 +1295,7 @@ void checkTemperature() {
             }
             rtspServerEnabled = false;
             rtspServer.stop();
+            enterIdleMode();
             mqttPublishState(true);
         } else if (overheatLockoutActive && temp <= (overheatShutdownC - OVERHEAT_LIMIT_STEP_C)) {
             // Allow re-arming after we cool down by at least one step
@@ -1600,6 +1619,7 @@ void resetToDefaultSettings() {
     mqttForceDiscovery = false;
 
     isStreaming = false;
+    idleModeActive = false;
 
     saveAudioSettings();
 
@@ -1968,6 +1988,45 @@ void processRTSP(WiFiClient &client) {
 
 // Web UI is a separate module (WebUI.*)
 
+// ============================================================
+// LOW POWER — IDLE MODE
+// Called when RTSP server is disabled (manual, schedule, thermal, MQTT command).
+// Stops I2S, lowers CPU to 80 MHz, enables WiFi modem light-sleep.
+// ============================================================
+void enterIdleMode() {
+    if (idleModeActive) return;
+    idleModeActive = true;
+    // 1. Stop I2S and free audio buffers
+    i2s_driver_uninstall(I2S_NUM_0);
+    if (i2s_32bit_buffer) { free(i2s_32bit_buffer); i2s_32bit_buffer = nullptr; }
+    if (i2s_16bit_buffer) { free(i2s_16bit_buffer); i2s_16bit_buffer = nullptr; }
+    // 2. Lower CPU frequency
+    setCpuFrequencyMhz(80);
+    // 3. WiFi light-sleep between DTIM beacons (keeps TCP/MQTT/WebUI alive)
+    WiFi.setSleep(WIFI_PS_MIN_MODEM);
+    simplePrintln("Idle mode: I2S stopped, CPU->80MHz, WiFi modem sleep ON");
+}
+
+// Restores full operation: WiFi full-power, CPU to configured frequency, I2S restarted.
+void exitIdleMode() {
+    if (!idleModeActive) return;
+    idleModeActive = false;
+    // 1. Restore WiFi full power
+    WiFi.setSleep(WIFI_PS_NONE);
+    // 2. Restore CPU to user-configured frequency
+    setCpuFrequencyMhz(cpuFrequencyMhz);
+    // 3. Re-allocate buffers and restart I2S
+    i2s_32bit_buffer = (int32_t*)malloc(currentBufferSize * sizeof(int32_t));
+    i2s_16bit_buffer = (int16_t*)malloc(currentBufferSize * sizeof(int16_t));
+    if (!i2s_32bit_buffer || !i2s_16bit_buffer) {
+        simplePrintln("FATAL: Memory allocation failed on idle exit!");
+        ESP.restart();
+    }
+    setup_i2s_driver();
+    updateHighpassCoeffs();
+    simplePrintln("Active mode: I2S init, CPU->" + String(cpuFrequencyMhz) + "MHz, WiFi modem sleep OFF");
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -2075,6 +2134,11 @@ void setup() {
 
     setCpuFrequencyMhz(cpuFrequencyMhz);
     simplePrintln("CPU frequency set to " + String(cpuFrequencyMhz) + " MHz for optimal thermal/performance balance");
+
+    // Enter idle mode at boot if RTSP server is disabled (overheat latch, schedule, etc.)
+    if (!rtspServerEnabled) {
+        enterIdleMode();
+    }
 
     if (!overheatLatched && rtspServerEnabled) {
         simplePrintln("RTSP server ready on port 8554");

@@ -115,6 +115,10 @@ extern void configureTimeService(bool enableNtp);
 extern void applyMdnsSetting();
 extern void mqttRequestReconnect(bool forceDiscovery);
 extern void mqttPublishDiscoverySoon();
+extern void mqttPublishState(bool force);
+extern bool idleModeActive;
+extern void enterIdleMode();
+extern void exitIdleMode();
 
 // Web server and in-memory log ring buffer
 static WebServer web(80);
@@ -361,17 +365,23 @@ static void httpActionServerStart(){
         return;
     }
     if (!rtspServerEnabled) {
+        exitIdleMode();
         rtspServerEnabled=true; rtspServer.begin(); rtspServer.setNoDelay(true);
         overheatLockoutActive = false;
+        mqttPublishState(true);
+        webui_pushLog(F("UI action: server_start"));
     }
-    webui_pushLog(F("UI action: server_start"));
     apiSendJSON(F("{\"ok\":true}"));
 }
 static void httpActionServerStop(){
     if (!requireMutationAuth()) return;
 
-    rtspServerEnabled=false; if (rtspClient && rtspClient.connected()) rtspClient.stop(); isStreaming=false; rtspServer.stop();
-    webui_pushLog(F("UI action: server_stop"));
+    if (rtspServerEnabled) {
+        rtspServerEnabled=false; if (rtspClient && rtspClient.connected()) rtspClient.stop(); isStreaming=false; rtspServer.stop();
+        enterIdleMode();
+        mqttPublishState(true);
+        webui_pushLog(F("UI action: server_stop"));
+    }
     apiSendJSON(F("{\"ok\":true}"));
 }
 static void httpActionResetI2S(){
