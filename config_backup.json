@@ -1,7 +1,7 @@
 {
   "_meta": {
     "fw_version": "1.6.0-le.1",
-    "device_ip": "192.168.1.76",
+    "device_ip": "${DEVICE_IP}",
     "backup_date": "2026-03-07",
     "note": "MQTT password NOT included — enter manually in Web UI. Deep sleep wake time is derived from stream_schedule_start_min."
   },
@@ -29,13 +29,13 @@
   },
   "mqtt": {
     "mqtt_enable": "on",
-    "mqtt_host": "192.168.1.55",
+    "mqtt_host": "${MQTT_HOST}",
     "mqtt_port": 1883,
-    "mqtt_user": "alejandro",
+    "mqtt_user": "${MQTT_USER}",
     "mqtt_topic": "esp32mic",
     "mqtt_discovery": "homeassistant",
     "mqtt_interval": 30,
-    "mqtt_client_id": "esp32mic_11feffc5e658",
+    "mqtt_client_id": "${MQTT_CLIENT_ID}",
     "mqtt_pass": "ENTER_MANUALLY"
   },
   "stream_schedule": {
