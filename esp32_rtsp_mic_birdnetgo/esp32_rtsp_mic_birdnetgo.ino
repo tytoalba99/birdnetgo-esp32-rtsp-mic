@@ -86,7 +86,7 @@ int32_t* i2s_32bit_buffer = nullptr;
 int16_t* i2s_16bit_buffer = nullptr;
 
 // -- Global state
-unsigned long audioPacketsSent = 0;
+uint32_t audioPacketsSent = 0;
 unsigned long lastStatsReset = 0;
 bool rtspServerEnabled = true;
 bool idleModeActive = false;  // true when RTSP server is OFF and device is in low-power idle
@@ -208,7 +208,7 @@ wifi_power_t currentWifiPowerLevel = WIFI_POWER_19_5dBm;
 
 // -- Adaptive WiFi TX Power
 static const float ADAPT_TX_STEPS[] = {5.0f, 7.0f, 8.5f, 11.0f, 13.0f, 15.0f, 17.0f, 18.5f};
-extern const int   ADAPT_TX_STEPS_COUNT = (int)(sizeof(ADAPT_TX_STEPS) / sizeof(ADAPT_TX_STEPS[0]));
+extern const int   ADAPT_TX_STEPS_COUNT = (int)(sizeof(ADAPT_TX_STEPS) / sizeof(ADAPT_TX_STEPS[0])); // extern needed: gives external linkage so WebUI.cpp can reference it
 static const float ADAPT_TX_RSSI_GOOD   = -65.0f;    // > this: lower TX after timer
 static const float ADAPT_TX_RSSI_BAD    = -78.0f;    // < this: raise to max immediately
 static const unsigned long ADAPT_TX_SAMPLE_MS    = 30000UL;   // RSSI sampling period
@@ -359,10 +359,13 @@ static String mqttJsonEscape(const String &s) {
     String o;
     o.reserve(s.length() + 8);
     for (size_t i = 0; i < s.length(); ++i) {
-        char c = s[i];
-        if (c == '"' || c == '\\') { o += '\\'; o += c; }
+        unsigned char c = (unsigned char)s[i];
+        if (c == '"' || c == '\\') { o += '\\'; o += (char)c; }
         else if (c == '\n') { o += "\\n"; }
-        else { o += c; }
+        else if (c == '\r') { o += "\\r"; }
+        else if (c == '\t') { o += "\\t"; }
+        else if (c < 0x20) { char esc[7]; snprintf(esc, sizeof(esc), "\\u%04x", c); o += esc; }
+        else { o += (char)c; }
     }
     return o;
 }
@@ -787,7 +790,12 @@ void checkMqtt() {
     mqttConnected = true;
     mqttClient.loop();
     if (mqttForceDiscovery || !mqttDiscoveryPublished) {
-        if (!mqttPublishDiscovery()) mqttLastError = "discovery_publish_failed";
+        static unsigned long lastDiscoveryAttemptMs = 0;
+        unsigned long nowMs = millis();
+        if (mqttForceDiscovery || (nowMs - lastDiscoveryAttemptMs) >= 30000UL) {
+            lastDiscoveryAttemptMs = nowMs;
+            if (!mqttPublishDiscovery()) mqttLastError = "discovery_publish_failed";
+        }
     }
     if (!mqttPublishState(false)) {
         mqttLastError = "state_publish_failed";
@@ -1094,6 +1102,10 @@ void checkDeepSleepSchedule() {
         deepSleepStatusCode = "reboot_pending";
         return;
     }
+    if (overheatLatched) {
+        deepSleepStatusCode = "overheat_latched";
+        return;
+    }
     if (rtspClient && rtspClient.connected()) {
         deepSleepStatusCode = "client_connected";
         return;
@@ -1169,20 +1181,6 @@ void checkDeepSleepSchedule() {
     esp_deep_sleep_start();
 }
 
-// Format current local date/time (uses NTP + offset), fallback to uptime
-String formatDateTime() {
-    time_t now = time(nullptr);
-    if (hasValidTime()) {
-        struct tm tmNow;
-        localtime_r(&now, &tmNow);
-        char buf[24];
-        strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tmNow);
-        return String(buf);
-    }
-    unsigned long uptimeSeconds = (millis() - bootTime) / 1000;
-    return String("uptime ") + formatUptime(uptimeSeconds);
-}
-
 // Timestamp for log lines (short)
 String formatLogTimestamp() {
     time_t now = time(nullptr);
@@ -1213,7 +1211,6 @@ bool attemptTimeSync(bool logResult, bool quickMode /*prefer short, single shot*
     int perTryTimeoutMs = quickMode ? 150 : 200;
     for (int i = 0; i < tries; ++i) {
         if (getLocalTime(&tmNow, perTryTimeoutMs)) { ok = true; break; }
-        if (!quickMode) delay(60);
     }
     if (ok) {
         timeSynced = true;
@@ -1259,10 +1256,9 @@ static void persistOverheatNote() {
 }
 
 void recordOverheatTrip(float temp) {
-    unsigned long uptimeSeconds = (millis() - bootTime) / 1000;
     overheatTripTemp = temp;
     overheatTriggeredAt = millis();
-    overheatLastTimestamp = formatUptime(uptimeSeconds);
+    overheatLastTimestamp = formatLogTimestamp();
     overheatLastReason = String("Thermal shutdown: ") + String(temp, 1) + " C reached (limit " +
                          String(overheatShutdownC, 1) + " C). Stream disabled; acknowledge in UI.";
     overheatLatched = true;
@@ -1344,6 +1340,8 @@ void checkPerformance() {
         minFreeHeap = currentHeap;
     }
 
+    if (idleModeActive) return; // I2S not running; auto-recovery not applicable
+
     if (isStreaming && (millis() - lastStatsReset) > 30000) {
         uint32_t runtime = millis() - lastStatsReset;
         uint32_t currentRate = (audioPacketsSent * 1000) / runtime;
@@ -1376,7 +1374,9 @@ void checkWiFiHealth() {
         initialized = true;
     }
     if (cur != WL_CONNECTED) {
-        simplePrintln("WiFi disconnected! Reconnecting...");
+        if (lastStatus == WL_CONNECTED) {
+            simplePrintln("WiFi disconnected! Reconnecting...");
+        }
         WiFi.reconnect();
     } else if (lastStatus != WL_CONNECTED) {
         wifiReconnectCount++;
@@ -1384,7 +1384,7 @@ void checkWiFiHealth() {
                       " (count " + String(wifiReconnectCount) + ")");
         applyMdnsSetting();
         if (timeSyncEnabled) {
-            attemptTimeSync(false);
+            attemptTimeSync(false, true); // quickMode: avoid blocking loop on reconnect
         }
         mqttRequestReconnect(true);
         mqttPublishState(true);
@@ -1394,9 +1394,11 @@ void checkWiFiHealth() {
     // Re-apply TX power WITHOUT logging (prevent periodic log spam)
     applyWifiTxPower(false);
 
-    int32_t rssi = WiFi.RSSI();
-    if (rssi < -85) {
-        simplePrintln("WARNING: Weak WiFi signal: " + String(rssi) + " dBm");
+    if (cur == WL_CONNECTED) {
+        int32_t rssi = WiFi.RSSI();
+        if (rssi < -85) {
+            simplePrintln("WARNING: Weak WiFi signal: " + String(rssi) + " dBm");
+        }
     }
 }
 
@@ -1405,10 +1407,9 @@ void checkScheduledReset() {
     if (!scheduledResetEnabled) return;
 
     unsigned long uptimeHours = (millis() - bootTime) / 3600000;
-    if (uptimeHours >= resetIntervalHours) {
+    if (uptimeHours >= resetIntervalHours && scheduledRebootAt == 0) {
         simplePrintln("SCHEDULED RESET: " + String(resetIntervalHours) + " hours reached");
-        delay(1000);
-        ESP.restart();
+        scheduleReboot(false, 1000);
     }
 }
 
@@ -1425,12 +1426,14 @@ static void preloadTimeSettingsForEarlyLogs() {
 
 // Load settings from flash
 void loadAudioSettings() {
-    audioPrefs.begin("audio", false);
+    audioPrefs.begin("audio", true); // read-only: loadAudioSettings() never writes
     currentSampleRate = audioPrefs.getUInt("sampleRate", DEFAULT_SAMPLE_RATE);
     currentGainFactor = audioPrefs.getFloat("gainFactor", DEFAULT_GAIN_FACTOR);
     currentBufferSize = audioPrefs.getUShort("bufferSize", DEFAULT_BUFFER_SIZE);
+    if (currentBufferSize < 256 || currentBufferSize > 8192) currentBufferSize = DEFAULT_BUFFER_SIZE;
     // (1) respect compile-time default 12 on first boot
     i2sShiftBits = audioPrefs.getUChar("shiftBits", i2sShiftBits);
+    if (i2sShiftBits > 24) i2sShiftBits = 12; // guard: shift>=32 is UB on int32_t
     autoRecoveryEnabled = audioPrefs.getBool("autoRecovery", true);
     scheduledResetEnabled = audioPrefs.getBool("schedReset", false);
     resetIntervalHours = audioPrefs.getUInt("resetHours", 24);
@@ -1699,11 +1702,7 @@ void restartI2S() {
     simplePrintln("I2S restarted successfully");
 }
 
-// Minimal print helpers: Serial + buffered for Web UI
-void simplePrint(String message) {
-    Serial.print(message);
-}
-
+// Minimal print helper: Serial + buffered for Web UI
 void simplePrintln(String message) {
     String line = "[" + formatLogTimestamp() + "] " + message;
     Serial.println(line);
@@ -1790,12 +1789,13 @@ static void stopStreamOnWriteFailure(WiFiClient &client, const char* reason) {
     lastStreamStopReason = reason;
     lastStreamStopMs = millis();
 
-    // Drop socket immediately so client can reconnect without waiting for inactivity timeout.
+    // Capture diagnostics before stopping the socket (remoteIP() is invalid after stop()).
+    String diag = buildRtspDiag(client);
     rtspParseBufferPos = 0;
     rtspParseBuffer[0] = '\0';
     client.stop();
 
-    simplePrintln("STREAMING STOPPED: " + lastStreamStopReason + " | " + buildRtspDiag(client));
+    simplePrintln("STREAMING STOPPED: " + lastStreamStopReason + " | " + diag);
     mqttPublishState(true);
 }
 
@@ -1907,7 +1907,8 @@ void handleRTSPCommand(WiFiClient &client, String request) {
     String cseq = "1";
     int cseqPos = request.indexOf("CSeq: ");
     if (cseqPos >= 0) {
-        cseq = request.substring(cseqPos + 6, request.indexOf("\r", cseqPos));
+        int cseqEnd = request.indexOf("\r", cseqPos);
+        cseq = request.substring(cseqPos + 6, cseqEnd >= 0 ? cseqEnd : request.length());
         cseq.trim();
     }
 
@@ -2133,8 +2134,9 @@ void setup() {
     Serial.begin(115200);
     delay(100);
 
-    // (4) seed for random(): combination of time and unique MAC
-    randomSeed((uint32_t)micros() ^ (uint32_t)(ESP.getEfuseMac() & 0xFFFFFFFF));
+    // (4) seed for random(): mix all 64 MAC bits + micros for better entropy
+    uint64_t efuseMac = ESP.getEfuseMac();
+    randomSeed((uint32_t)micros() ^ (uint32_t)(efuseMac & 0xFFFFFFFF) ^ (uint32_t)(efuseMac >> 32));
 
     bootTime = millis(); // Store boot time
     rtpSSRC = (uint32_t)random(1, 0x7FFFFFFF);
