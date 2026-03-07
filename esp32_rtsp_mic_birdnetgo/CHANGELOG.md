@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.6.0-le.1-fix1 — 2026-03-07
+
+Bug fixes found in full CodeRabbit-style review. No new features. Binary: 1,294,266 bytes (98% flash).
+
+**Critical — undefined behavior / correctness:**
+- `loadAudioSettings()`: `i2sShiftBits` now clamped to ≤ 24 after NVS read; an NVS-corrupt value ≥ 32 caused undefined behavior when right-shifting an `int32_t` in `streamAudio()`.
+- `loadAudioSettings()`: `currentBufferSize` now clamped to 256–8192 after NVS read; a corrupt 0 value would trigger `malloc(0)` and a silent boot-loop.
+
+**High — logic bugs:**
+- `stopStreamOnWriteFailure()`: `buildRtspDiag()` is now called *before* `client.stop()`; calling it after invalidated `remoteIP()` and produced stale diagnostics.
+- `httpSet` key `cpu_freq`: `setCpuFrequencyMhz()` is no longer called when `idleModeActive` is true; it would silently override the 80 MHz idle power saving. The new frequency is applied by `exitIdleMode()` when the server is re-enabled.
+
+**Medium — robustness:**
+- `jsonEscape()` (WebUI) and `mqttJsonEscape()` (main): now escape `\r`, `\t`, and all control characters `< 0x20` as `\uXXXX`; previously these passed through raw, producing invalid JSON for SSID/reason strings containing those characters.
+- `httpLogs()`: pre-calculates total log size and calls `String::reserve()` before concatenation loop; avoids up to 120 heap reallocations per request.
+- `attemptTimeSync()`: removed `delay(60)` between NTP retry attempts; the delay blocked the main loop for up to 180 ms with no benefit (each `getLocalTime()` already has its own timeout).
+- `httpSet` on/off setters: added `v.trim()` to all boolean setting handlers (`auto_recovery`, `thr_mode`, `sched_reset`, `hp_enable`, `oh_enable`, `time_sync`, `stream_sched`, `deep_sleep_sched`, `mdns_enable`, `mqtt_enable`); padded values like `" on"` were silently rejected before.
+
+**Low — minor improvements:**
+- `randomSeed()`: XORs both halves of the 64-bit MAC efuse value; previously only the lower 32 bits were used, which share the same Seeed OUI prefix across all devices.
+- `/api/status` field `stream_url_mdns`: now returns an empty string when mDNS is disabled or not running, instead of always returning a non-functional `.local` URL.
+
 ## 1.6.0 — 2026-02-13
 - MQTT: publish interval is now configurable in UI/API (`mqtt_interval`), persisted in NVS (`mqttIntSec`), default `60 s` (range `10..3600`).
 - MQTT state payload extended with diagnostics: `fw_build`, `reboot_reason`, `restart_counter`, `wifi_ssid`, `wifi_reconnect_count`, `stream_uptime_s`, `client_count`, `audio_format`.

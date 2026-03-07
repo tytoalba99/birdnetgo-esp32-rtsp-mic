@@ -89,7 +89,13 @@ extern String formatSince(unsigned long eventMs);
 extern void restartI2S();
 extern void saveAudioSettings();
 extern void applyWifiTxPower(bool log);
+extern String formatLogTimestamp();
 extern const char* FW_VERSION_STR;
+extern bool highpassEnabled;
+extern uint16_t highpassCutoffHz;
+extern float wifiTxPowerDbm;
+extern uint32_t resetIntervalHours;
+extern void updateHighpassCoeffs();
 extern bool timeSynced;
 extern unsigned long lastTimeSyncSuccess;
 extern int32_t timeOffsetMinutes;
@@ -116,7 +122,6 @@ extern String mqttLastError;
 extern bool isStreamScheduleAllowedNow(bool* timeValidOut);
 extern const char* MDNS_HOSTNAME;
 extern bool attemptTimeSync(bool logResult, bool quickMode);
-extern String formatDateTime();
 extern void configureTimeService(bool enableNtp);
 extern void applyMdnsSetting();
 extern void mqttRequestReconnect(bool forceDiscovery);
@@ -139,9 +144,24 @@ void webui_pushLog(const String &line) {
     if (logCount < LOG_CAP) logCount++;
 }
 
+// Internal helper: prepends timestamp before pushing to the log buffer.
+// Use this for events originating in WebUI.cpp; simplePrintln() already timestamps.
+static void webui_log(const String &line) {
+    webui_pushLog("[" + formatLogTimestamp() + "] " + line);
+}
+
 static String jsonEscape(const String &s) {
-    String o; o.reserve(s.length()+8);
-    for (size_t i=0;i<s.length();++i){char c=s[i]; if(c=='"'||c=='\\'){o+='\\';o+=c;} else if(c=='\n'){o+="\\n";} else {o+=c;}}
+    String o;
+    o.reserve(s.length() + 8);
+    for (size_t i = 0; i < s.length(); ++i) {
+        unsigned char c = (unsigned char)s[i];
+        if (c == '"' || c == '\\') { o += '\\'; o += (char)c; }
+        else if (c == '\n') { o += "\\n"; }
+        else if (c == '\r') { o += "\\r"; }
+        else if (c == '\t') { o += "\\t"; }
+        else if (c < 0x20) { char esc[7]; snprintf(esc, sizeof(esc), "\\u%04x", c); o += esc; }
+        else { o += (char)c; }
+    }
     return o;
 }
 
@@ -218,7 +238,7 @@ static void httpStatus() {
     json += "\"fw_version\":\"" + String(FW_VERSION_STR) + "\",";
     json += "\"ip\":\"" + WiFi.localIP().toString() + "\",";
     json += "\"stream_url_ip\":\"rtsp://" + WiFi.localIP().toString() + ":8554/audio\",";
-    json += "\"stream_url_mdns\":\"rtsp://" + String(MDNS_HOSTNAME) + ".local:8554/audio\",";
+    json += "\"stream_url_mdns\":\"" + String(mdnsEnabled && mdnsRunning ? String("rtsp://") + String(MDNS_HOSTNAME) + ".local:8554/audio" : "") + "\",";
     json += "\"wifi_rssi\":" + String(WiFi.RSSI()) + ",";
     json += "\"wifi_tx_dbm\":" + String(wifiPowerLevelToDbm(currentWifiPowerLevel),1) + ",";
     json += "\"wifi_tx_adaptive\":" + String(wifiAdaptTxEnabled?"true":"false") + ",";
@@ -270,7 +290,6 @@ static void httpAudioStatus() {
     json += "\"buffer_size\":" + String(currentBufferSize) + ",";
     json += "\"i2s_shift\":" + String(i2sShiftBits) + ",";
     json += "\"latency_ms\":" + String(latency_ms,1) + ",";
-    extern bool highpassEnabled; extern uint16_t highpassCutoffHz;
     json += "\"profile\":\"" + jsonEscape(profileName(currentBufferSize)) + "\",";
     json += "\"hp_enable\":" + String(highpassEnabled?"true":"false") + ",";
     json += "\"hp_cutoff_hz\":" + String((uint32_t)highpassCutoffHz) + ",";
@@ -337,7 +356,8 @@ static void httpThermalClear() {
         overheatTriggeredAt = 0;
         overheatLastReason = String("Thermal latch cleared manually.");
         overheatLastTimestamp = String("");
-        if (!rtspServerEnabled) {
+        bool scheduleBlocking = streamScheduleEnabled && !isStreamScheduleAllowedNow(nullptr);
+        if (!rtspServerEnabled && !scheduleBlocking) {
             exitIdleMode();
             rtspServer.begin();
             rtspServer.setNoDelay(true);
@@ -345,7 +365,7 @@ static void httpThermalClear() {
             mqttPublishState(true);
         }
         saveAudioSettings();
-        webui_pushLog(F("UI action: thermal_latch_clear"));
+        webui_log(F("UI action: thermal_latch_clear"));
         apiSendJSON(F("{\"ok\":true}"));
     } else {
         apiSendJSON(F("{\"ok\":false}"));
@@ -353,7 +373,13 @@ static void httpThermalClear() {
 }
 
 static void httpLogs() {
+    size_t total = 0;
+    for (size_t i = 0; i < logCount; i++) {
+        size_t idx = (logHead + LOG_CAP - logCount + i) % LOG_CAP;
+        total += logBuffer[idx].length() + 1;
+    }
     String out;
+    out.reserve(total);
     for (size_t i=0;i<logCount;i++){
         size_t idx = (logHead + LOG_CAP - logCount + i) % LOG_CAP;
         out += logBuffer[idx]; out += '\n';
@@ -369,8 +395,13 @@ static void httpActionServerStart(){
     if (!requireMutationAuth()) return;
 
     if (overheatLatched) {
-        webui_pushLog(F("Server start blocked: thermal protection latched"));
+        webui_log(F("Server start blocked: thermal protection latched"));
         apiSendJSON(F("{\"ok\":false,\"error\":\"thermal_latched\"}"));
+        return;
+    }
+    if (streamScheduleEnabled && !isStreamScheduleAllowedNow(nullptr)) {
+        webui_log(F("Server start blocked: outside stream schedule window"));
+        apiSendJSON(F("{\"ok\":false,\"error\":\"schedule_blocked\"}"));
         return;
     }
     if (!rtspServerEnabled) {
@@ -378,7 +409,7 @@ static void httpActionServerStart(){
         rtspServerEnabled=true; rtspServer.begin(); rtspServer.setNoDelay(true);
         overheatLockoutActive = false;
         mqttPublishState(true);
-        webui_pushLog(F("UI action: server_start"));
+        webui_log(F("UI action: server_start"));
     }
     apiSendJSON(F("{\"ok\":true}"));
 }
@@ -389,20 +420,21 @@ static void httpActionServerStop(){
         rtspServerEnabled=false; if (rtspClient && rtspClient.connected()) rtspClient.stop(); isStreaming=false; rtspServer.stop();
         enterIdleMode();
         mqttPublishState(true);
-        webui_pushLog(F("UI action: server_stop"));
+        webui_log(F("UI action: server_stop"));
     }
     apiSendJSON(F("{\"ok\":true}"));
 }
 static void httpActionResetI2S(){
     if (!requireMutationAuth()) return;
 
-    webui_pushLog(F("UI action: reset_i2s"));
+    webui_log(F("UI action: reset_i2s"));
     restartI2S(); apiSendJSON(F("{\"ok\":true}"));
 }
 
 static void httpActionTimeSync(){
     if (!requireMutationAuth()) return;
 
+    webui_log(F("UI action: time_sync"));
     bool ok = attemptTimeSync(true, true);
     apiSendJSON(String("{\"ok\":") + (ok ? "true" : "false") + "}");
 }
@@ -410,7 +442,7 @@ static void httpActionTimeSync(){
 static void httpActionNetworkReset(){
     if (!requireMutationAuth()) return;
 
-    webui_pushLog(F("UI action: network_reset (clearing Wi-Fi and rebooting)"));
+    webui_log(F("UI action: network_reset (clearing Wi-Fi and rebooting)"));
     WiFiManager wm;
     wm.resetSettings();
     apiSendJSON(F("{\"ok\":true}"));
@@ -420,7 +452,7 @@ static void httpActionNetworkReset(){
 static void httpActionMqttDiscovery(){
     if (!requireMutationAuth()) return;
 
-    webui_pushLog(F("UI action: mqtt_discovery"));
+    webui_log(F("UI action: mqtt_discovery"));
     mqttPublishDiscoverySoon();
     apiSendJSON(F("{\"ok\":true}"));
 }
@@ -515,9 +547,9 @@ static void httpSet() {
     String key = web.arg("key");
     String val = web.hasArg("value") ? web.arg("value") : String("");
     if (key == "mqtt_pass") {
-        webui_pushLog(F("UI set: mqtt_pass=<hidden>"));
+        webui_log(F("UI set: mqtt_pass=<hidden>"));
     } else if (val.length()) {
-        webui_pushLog(String("UI set: ")+key+"="+val);
+        webui_log(String("UI set: ")+key+"="+val);
     }
 
     bool handled = false;
@@ -547,7 +579,6 @@ static void httpSet() {
         handled = true;
         float v;
         if (argToFloat(v)) {
-            extern float wifiTxPowerDbm;
             if (fabsf(v + 2.0f) < 0.01f) {
                 // -2.0 sentinel = enable adaptive mode
                 wifiAdaptTxEnabled = true;
@@ -571,12 +602,12 @@ static void httpSet() {
     }
     else if (key == "auto_recovery") {
         handled = true;
-        String v = web.arg("value");
+        String v = web.arg("value"); v.trim();
         if (v == "on" || v == "off") { autoRecoveryEnabled = (v == "on"); saveAudioSettings(); applied = true; }
     }
     else if (key == "thr_mode") {
         handled = true;
-        String v = web.arg("value");
+        String v = web.arg("value"); v.trim();
         if (v == "auto") { autoThresholdEnabled = true; minAcceptableRate = computeRecommendedMinRate(); saveAudioSettings(); applied = true; }
         else if (v == "manual") { autoThresholdEnabled = false; saveAudioSettings(); applied = true; }
     }
@@ -592,32 +623,37 @@ static void httpSet() {
     }
     else if (key == "sched_reset") {
         handled = true;
-        String v = web.arg("value");
-        if (v == "on" || v == "off") { extern bool scheduledResetEnabled; scheduledResetEnabled = (v == "on"); saveAudioSettings(); applied = true; }
+        String v = web.arg("value"); v.trim();
+        if (v == "on" || v == "off") { scheduledResetEnabled = (v == "on"); saveAudioSettings(); applied = true; }
     }
     else if (key == "reset_hours") {
         handled = true;
         uint32_t v;
-        if (argToUInt(v) && v >= 1 && v <= 168) { extern uint32_t resetIntervalHours; resetIntervalHours = v; saveAudioSettings(); applied = true; }
+        if (argToUInt(v) && v >= 1 && v <= 168) { resetIntervalHours = v; saveAudioSettings(); applied = true; }
     }
     else if (key == "cpu_freq") {
         handled = true;
         uint32_t v;
-        if (argToUInt(v) && v >= 40 && v <= 160) { cpuFrequencyMhz = (uint8_t)v; setCpuFrequencyMhz(cpuFrequencyMhz); saveAudioSettings(); applied = true; }
+        if (argToUInt(v) && v >= 40 && v <= 160) {
+            cpuFrequencyMhz = (uint8_t)v;
+            if (!idleModeActive) setCpuFrequencyMhz(cpuFrequencyMhz); // applied on exitIdleMode() when in idle
+            saveAudioSettings();
+            applied = true;
+        }
     }
     else if (key == "hp_enable") {
         handled = true;
-        String v = web.arg("value");
-        if (v == "on" || v == "off") { extern bool highpassEnabled; highpassEnabled = (v == "on"); extern void updateHighpassCoeffs(); updateHighpassCoeffs(); saveAudioSettings(); applied = true; }
+        String v = web.arg("value"); v.trim();
+        if (v == "on" || v == "off") { highpassEnabled = (v == "on"); updateHighpassCoeffs(); saveAudioSettings(); applied = true; }
     }
     else if (key == "hp_cutoff") {
         handled = true;
         uint32_t v;
-        if (argToUInt(v) && v >= 10 && v <= 10000) { extern uint16_t highpassCutoffHz; highpassCutoffHz = (uint16_t)v; extern void updateHighpassCoeffs(); updateHighpassCoeffs(); saveAudioSettings(); applied = true; }
+        if (argToUInt(v) && v >= 10 && v <= 10000) { highpassCutoffHz = (uint16_t)v; updateHighpassCoeffs(); saveAudioSettings(); applied = true; }
     }
     else if (key == "oh_enable") {
         handled = true;
-        String v = web.arg("value");
+        String v = web.arg("value"); v.trim();
         if (v == "on" || v == "off") { overheatProtectionEnabled = (v == "on"); if (!overheatProtectionEnabled) { overheatLockoutActive = false; } saveAudioSettings(); applied = true; }
     }
     else if (key == "oh_limit") {
@@ -632,7 +668,7 @@ static void httpSet() {
     }
     else if (key == "time_sync") {
         handled = true;
-        String v = web.arg("value");
+        String v = web.arg("value"); v.trim();
         if (v == "on" || v == "off") {
             timeSyncEnabled = (v == "on");
             configureTimeService(timeSyncEnabled);
@@ -645,7 +681,7 @@ static void httpSet() {
     }
     else if (key == "stream_sched") {
         handled = true;
-        String v = web.arg("value");
+        String v = web.arg("value"); v.trim();
         if (v == "on" || v == "off") { streamScheduleEnabled = (v == "on"); saveAudioSettings(); applied = true; }
     }
     else if (key == "stream_start_min") {
@@ -660,7 +696,7 @@ static void httpSet() {
     }
     else if (key == "deep_sleep_sched") {
         handled = true;
-        String v = web.arg("value");
+        String v = web.arg("value"); v.trim();
         if (v == "on" || v == "off") {
             deepSleepScheduleEnabled = (v == "on");
             if (!deepSleepScheduleEnabled) {
@@ -673,12 +709,12 @@ static void httpSet() {
     }
     else if (key == "mdns_enable") {
         handled = true;
-        String v = web.arg("value");
+        String v = web.arg("value"); v.trim();
         if (v == "on" || v == "off") { mdnsEnabled = (v == "on"); applyMdnsSetting(); saveAudioSettings(); applied = true; }
     }
     else if (key == "mqtt_enable") {
         handled = true;
-        String v = web.arg("value");
+        String v = web.arg("value"); v.trim();
         if (v == "on" || v == "off") {
             mqttEnabled = (v == "on");
             saveAudioSettings();
@@ -785,7 +821,7 @@ static void httpSet() {
 static void httpActionReboot(){
     if (!requireMutationAuth()) return;
 
-    webui_pushLog(F("UI action: reboot"));
+    webui_log(F("UI action: reboot"));
     apiSendJSON(F("{\"ok\":true}"));
     scheduleReboot(false, 600);
 }
@@ -793,7 +829,7 @@ static void httpActionReboot(){
 static void httpActionFactoryReset(){
     if (!requireMutationAuth()) return;
 
-    webui_pushLog(F("UI action: factory_reset"));
+    webui_log(F("UI action: factory_reset"));
     apiSendJSON(F("{\"ok\":true}"));
     scheduleReboot(true, 600);
 }
