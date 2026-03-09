@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.6.0-le.1-fix2 — 2026-03-09
+
+Bug fix for deep sleep power regression introduced in v1.6.0. No new features. Binary: 1,294,682 bytes (98% flash).
+
+**Critical — power / deep sleep:**
+- `checkDeepSleepSchedule()`: fixed deep sleep consuming ~250 mW instead of near-zero.
+  **Root cause:** v1.6.0 added MQTT (`PubSubClient` / `WiFiClient`), which keeps an active TCP connection to the broker. Calling `esp_deep_sleep_start()` with an open TCP socket prevented the WiFi modem from powering down, leaving the radio active during sleep.
+  **Fix:** before entering deep sleep, the firmware now (1) publishes a final MQTT state update, (2) explicitly publishes `"offline"` to the availability topic, (3) calls `mqttClient.loop()` to flush the TX buffer, (4) calls `mqttClient.disconnect()` and waits 200 ms for the TCP FIN/ACK exchange (covers remote brokers with RTT up to ~100 ms; LWT is the fallback if the close does not complete in time), then (5) calls `WiFi.disconnect(true)` + `WiFi.mode(WIFI_OFF)` + 100 ms delay to fully power down the radio before `esp_deep_sleep_start()`.
+  In v1.5.0, no TCP connections were open at sleep time so the modem shut down cleanly; v1.6.0+ requires this explicit teardown.
+
 ## 1.6.0-le.1-fix1 — 2026-03-07
 
 Bug fixes found in full CodeRabbit-style review. No new features. Binary: 1,294,266 bytes (98% flash).
