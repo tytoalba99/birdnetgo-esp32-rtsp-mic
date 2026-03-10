@@ -12,6 +12,7 @@
 #include <math.h>
 #include <esp_sleep.h>
 #include <esp_system.h>
+#include <lwip/sockets.h>
 #include "WebUI.h"
 
 // ================== SETTINGS (ESP32 RTSP Mic for BirdNET-Go) ==================
@@ -1679,7 +1680,7 @@ void setup_i2s_driver() {
     i2s_config.channel_format = I2S_CHANNEL_FMT_ONLY_LEFT;
     i2s_config.communication_format = I2S_COMM_FORMAT_STAND_I2S;
     i2s_config.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
-    i2s_config.dma_desc_num = 8;
+    i2s_config.dma_desc_num = 16;
     i2s_config.dma_frame_num = dma_buf_len;
 
     i2s_pin_config_t pin_config = {};
@@ -1698,9 +1699,21 @@ void setup_i2s_driver() {
 }
 
 static const uint8_t RTSP_WRITE_RETRY_MAX = 8;
-static const uint32_t RTSP_WRITE_TIMEOUT_MS = 30UL;
+static const uint32_t RTSP_WRITE_TIMEOUT_MS = 500UL;
 
-// Write helper with short retry window to tolerate brief TCP backpressure spikes.
+// Set kernel-level TCP send timeout on the RTSP socket.
+// SO_SNDTIMEO (200 ms) < RTSP_WRITE_TIMEOUT_MS (500 ms): the kernel returns
+// control to writeAll() before the userspace budget expires, allowing retries.
+static void setRtspSndTimeout(WiFiClient &client) {
+    int fd = client.fd();
+    if (fd < 0) return;
+    struct timeval tv;
+    tv.tv_sec  = 0;
+    tv.tv_usec = 200000; // 200 ms
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+}
+
+// Write helper with retry window to tolerate brief TCP backpressure spikes.
 static bool writeAll(WiFiClient &client, const uint8_t* data, size_t len) {
     size_t off = 0;
     uint8_t retries = 0;
@@ -2116,42 +2129,9 @@ void setup() {
 }
 
 void loop() {
-    ArduinoOTA.handle();
-
-    webui_handleClient();
-
-    if (millis() - lastTempCheck > 60000) { // 1 min
-        checkTemperature();
-        lastTempCheck = millis();
-    }
-
-    if (millis() - lastMemoryCheck > 30000) { // 30 s
-        uint32_t currentHeap = ESP.getFreeHeap();
-        if (currentHeap < minFreeHeap) minFreeHeap = currentHeap;
-        lastMemoryCheck = millis();
-    }
-
-    if (millis() - lastPerformanceCheck > (performanceCheckInterval * 60000UL)) {
-        checkPerformance();
-        lastPerformanceCheck = millis();
-    }
-
-    if (millis() - lastWiFiCheck > 30000) { // 30 s
-        checkWiFiHealth(); // without TX power log spam
-        lastWiFiCheck = millis();
-    }
-
-    checkTimeSync();
-    if (millis() - lastStreamScheduleCheck > 1000UL) {
-        checkStreamSchedule();
-        checkDeepSleepSchedule();
-        lastStreamScheduleCheck = millis();
-    }
-
-    checkScheduledReset();
-    checkMqtt();
-
-    // RTSP client management
+    // RTSP + audio first: minimises the gap between consecutive i2s_read() calls.
+    // The enlarged DMA buffer (16 descriptors, ~170 ms) absorbs the latency
+    // introduced by the rest of the loop below.
     if (rtspServerEnabled) {
         if (rtspClient && !rtspClient.connected()) {
             String diag = buildRtspDiag(rtspClient);
@@ -2187,6 +2167,7 @@ void loop() {
             if (newClient) {
                 rtspClient = newClient;
                 rtspClient.setNoDelay(true);
+                setRtspSndTimeout(rtspClient);
                 rtspParseBufferPos = 0;
                 rtspParseBuffer[0] = '\0';
                 lastRTSPActivity = millis();
@@ -2221,6 +2202,42 @@ void loop() {
             if (wasStreaming) mqttPublishState(true);
         }
     }
+
+    ArduinoOTA.handle();
+
+    webui_handleClient();
+
+    if (millis() - lastTempCheck > 60000) { // 1 min
+        checkTemperature();
+        lastTempCheck = millis();
+    }
+
+    if (millis() - lastMemoryCheck > 30000) { // 30 s
+        uint32_t currentHeap = ESP.getFreeHeap();
+        if (currentHeap < minFreeHeap) minFreeHeap = currentHeap;
+        lastMemoryCheck = millis();
+    }
+
+    if (millis() - lastPerformanceCheck > (performanceCheckInterval * 60000UL)) {
+        checkPerformance();
+        lastPerformanceCheck = millis();
+    }
+
+    if (millis() - lastWiFiCheck > 30000) { // 30 s
+        checkWiFiHealth(); // without TX power log spam
+        lastWiFiCheck = millis();
+    }
+
+    checkTimeSync();
+    if (millis() - lastStreamScheduleCheck > 1000UL) {
+        checkStreamSchedule();
+        checkDeepSleepSchedule();
+        lastStreamScheduleCheck = millis();
+    }
+
+    checkScheduledReset();
+    checkMqtt();
+
     // Handle deferred reboot/reset safely here
     if (scheduledRebootAt != 0 && millis() >= scheduledRebootAt) {
         if (scheduledFactoryReset) {
