@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "WebSearch",
+      "WebFetch(domain:documentation.espressif.com)",
+      "WebFetch(domain:learn.adafruit.com)",
+      "WebFetch(domain:docs.espressif.com)",
+      "WebFetch(domain:wiki.seeedstudio.com)"
+    ]
+  }
+}

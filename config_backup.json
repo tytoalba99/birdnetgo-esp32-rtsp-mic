@@ -1,0 +1,63 @@
+{
+  "_meta": {
+    "fw_version": "1.6.0-le.1",
+    "device_ip": "DEVICE_IP",
+    "backup_date": "2026-03-07",
+    "note": "MQTT password NOT included — enter manually in Web UI. Deep sleep wake time is derived from stream_schedule_start_min."
+  },
+  "audio": {
+    "sample_rate": 48000,
+    "gain": 1.2,
+    "buffer": 1024,
+    "shift": 12,
+    "hp_enable": "on",
+    "hp_cutoff": 500
+  },
+  "wifi": {
+    "wifi_tx": -2.0,
+    "wifi_tx_mode": "adaptive (sentinel -2.0)"
+  },
+  "cpu": {
+    "cpu_freq": 160
+  },
+  "mdns": {
+    "mdns_enable": "on"
+  },
+  "time": {
+    "time_sync": "on",
+    "time_offset": 60
+  },
+  "mqtt": {
+    "mqtt_enable": "on",
+    "mqtt_host": "MQTT_HOST",
+    "mqtt_port": 1883,
+    "mqtt_user": "MQTT_USER",
+    "mqtt_topic": "esp32mic",
+    "mqtt_discovery": "homeassistant",
+    "mqtt_interval": 30,
+    "mqtt_client_id": "MQTT_CLIENT_ID",
+    "mqtt_pass": "ENTER_MANUALLY"
+  },
+  "stream_schedule": {
+    "stream_sched": "on",
+    "stream_start_min": 360,
+    "stream_stop_min": 1439,
+    "stream_start_human": "06:00",
+    "stream_stop_human": "23:59"
+  },
+  "deep_sleep": {
+    "deep_sleep_sched": "on",
+    "note": "Wakes at stream_start_min (06:00). No separate window."
+  },
+  "performance": {
+    "auto_recovery": "on",
+    "thr_mode": "auto",
+    "check_interval": 15,
+    "sched_reset": "off",
+    "reset_hours": 24
+  },
+  "thermal": {
+    "oh_enable": "on",
+    "oh_limit": 80
+  }
+}
