@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-HTML_FILE="${ROOT_DIR}/webui/index.html"
+HTML_FILE="${ROOT_DIR}/webui/index_v2.html"
 OUT_FILE="${ROOT_DIR}/WebUI_gz.h"
 
 if [[ ! -f "${HTML_FILE}" ]]; then

@@ -1,123 +1,3 @@
-<<<<<<< HEAD
-<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><meta name='color-scheme' content='light dark'><title>ESP32 RTSP Mic for BirdNET-Go</title><style>
-:root{color-scheme:light dark;--bg:#f7f6f3;--sb:#eeecea;--fg:#1a1a1a;--fm:#6b6560;--bd:#c8c4be;--acc:#2d6a4f;--ah:rgba(45,106,79,.08);--warn:#c77b2a;--bad:#b5291c;--fi:#fff;--ra:rgba(0,0,0,.03);--t:.12s ease}
-@media(prefers-color-scheme:dark){:root{--bg:#111210;--sb:#191915;--fg:#e8e4dc;--fm:#8a857c;--bd:#343230;--acc:#4a9c73;--ah:rgba(74,156,115,.12);--warn:#d9924a;--bad:#c94035;--fi:#1e1c1a;--ra:rgba(255,255,255,.04)}}
-:root[data-theme=light]{color-scheme:light;--bg:#f7f6f3;--sb:#eeecea;--fg:#1a1a1a;--fm:#6b6560;--bd:#c8c4be;--acc:#2d6a4f;--ah:rgba(45,106,79,.08);--warn:#c77b2a;--bad:#b5291c;--fi:#fff;--ra:rgba(0,0,0,.03)}
-:root[data-theme=dark]{color-scheme:dark;--bg:#111210;--sb:#191915;--fg:#e8e4dc;--fm:#8a857c;--bd:#343230;--acc:#4a9c73;--ah:rgba(74,156,115,.12);--warn:#d9924a;--bad:#c94035;--fi:#1e1c1a;--ra:rgba(255,255,255,.04)}
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;background:var(--bg);color:var(--fg);min-height:100vh;font-size:15px;line-height:1.5}
-a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
-.mono{font-family:'Cascadia Code','Cascadia Mono',Consolas,'Fira Code','Fira Mono',ui-monospace,'SF Mono',Menlo,monospace!important}
-.muted{color:var(--fm)}
-.ok{color:var(--acc)}
-.warn{color:var(--warn)}
-.bad{color:var(--bad)}
-span.ok,span.warn,span.bad{font-family:'Cascadia Code','Cascadia Mono',Consolas,'Fira Code','Fira Mono',ui-monospace,'SF Mono',Menlo,monospace;font-size:12px;font-weight:700;padding:2px 7px;border:1px solid;letter-spacing:.06em;text-transform:uppercase}
-span.ok{color:var(--acc);background:var(--ah);border-color:rgba(45,106,79,.3)}
-span.warn{color:var(--warn);background:rgba(199,123,42,.08);border-color:rgba(199,123,42,.3)}
-span.bad{color:var(--bad);background:rgba(181,41,28,.08);border-color:rgba(181,41,28,.3)}
-.dirty{border-color:var(--bad)!important;background:rgba(181,41,28,.06)!important;box-shadow:0 0 0 2px rgba(181,41,28,.12)}
-.app{display:flex;min-height:100vh}
-.sidebar{width:300px;flex-shrink:0;background:var(--sb);border-right:1px solid var(--bd);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow-y:auto}
-.sb-top{padding:14px 14px 10px;border-bottom:1px solid var(--bd)}
-.sb-brand{margin-bottom:6px;display:flex;align-items:center;gap:8px}.sb-logo{width:22px;height:22px;border-radius:3px;flex-shrink:0;opacity:.9}
-.title{font-size:13px;font-weight:700;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;line-height:1.3;color:var(--fg);letter-spacing:-.01em}
-.badge{display:inline-block;font-family:'Cascadia Code','Cascadia Mono',Consolas,'Fira Code','Fira Mono',ui-monospace,'SF Mono',Menlo,monospace;font-size:10px;background:var(--ah);color:var(--acc);border:1px solid rgba(45,106,79,.25);padding:1px 5px;margin-top:3px;font-weight:600;letter-spacing:.03em}
-.subtitle{margin-top:8px}
-.rtsp-row{display:flex;flex-direction:column;padding:5px 0;border-top:1px solid var(--bd)}
-.rtsp-row:first-child{border-top:none}
-.rtsp-lbl{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--fm);margin-bottom:2px}
-.rtsp-url{font-family:'Cascadia Code','Cascadia Mono',Consolas,'Fira Code','Fira Mono',ui-monospace,'SF Mono',Menlo,monospace;font-size:10.5px;color:var(--acc);word-break:break-all;line-height:1.35}
-.rtsp-url:hover{text-decoration:underline}
-.rtsp-link-row{display:flex;align-items:center;gap:5px}
-.copy-btn{flex-shrink:0;background:none;border:none;padding:2px 3px;cursor:pointer;color:var(--fm);font-size:12px;line-height:1;border-radius:3px;transition:color var(--t),background var(--t)}
-.copy-btn:hover{color:var(--acc);background:var(--ah)}
-.copy-btn.copied{color:var(--acc)}
-.sb-nav{padding:6px 0;flex:1}
-.nav-item{display:block;padding:8px 14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:13px;color:var(--fm);cursor:pointer;border-left:3px solid transparent;text-decoration:none;transition:all var(--t)}
-.nav-item:hover{color:var(--fg);background:rgba(0,0,0,.04);text-decoration:none}
-.nav-item.active{color:var(--acc);border-left-color:var(--acc);background:var(--ah);font-weight:700}
-.sb-footer{padding:10px 14px;border-top:1px solid var(--bd)}
-.gh{display:inline-block;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:11px;color:var(--fm);margin-bottom:8px}
-.gh:hover{color:var(--acc);text-decoration:none}
-.lang{display:flex;align-items:center;gap:6px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:11px;color:var(--fm);flex-wrap:wrap}
-.content{flex:1;overflow:auto;min-width:0}
-.sec{padding:22px 28px;border-bottom:1px solid var(--bd)}
-.sec:last-child{border-bottom:none}
-.sec-title{display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:7px;border-bottom:2px solid var(--acc)}
-h2{font-size:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-weight:700;color:var(--fm);margin:0;text-transform:uppercase;letter-spacing:.12em}
-table{width:100%;border-collapse:collapse;font-size:14px}
-td{padding:6px 4px;vertical-align:middle}
-tr.alt td{background:var(--ra)}
-td.k{color:var(--fm);width:40%;font-size:13.5px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;padding-right:10px;vertical-align:middle}
-td.v{font-family:'Cascadia Code','Cascadia Mono',Consolas,'Fira Code','Fira Mono',ui-monospace,'SF Mono',Menlo,monospace;font-size:14px;font-weight:500}
-button,select,input{font-size:14px;padding:6px 10px;border:1px solid var(--bd);background:var(--fi);color:var(--fg);border-radius:0;outline:none;transition:all var(--t)}button,select{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif}input{font-family:'Cascadia Code','Cascadia Mono',Consolas,'Fira Code','Fira Mono',ui-monospace,'SF Mono',Menlo,monospace}
-option{background:var(--fi);color:var(--fg)}
-button{background:var(--ra);cursor:pointer;font-weight:700;border-radius:0}
-button:hover{background:var(--acc);color:#fff;border-color:var(--acc)}
-button:active{opacity:.8}
-button:disabled{opacity:.4;cursor:not-allowed}
-button.active{background:var(--acc);color:#fff;border-color:var(--acc)}
-button.danger{color:var(--bad);border-color:rgba(181,41,28,.5);background:rgba(181,41,28,.06)}
-button.danger:hover{background:var(--bad);color:#fff;border-color:var(--bad)}
-button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
-input[type=number]{width:110px}
-input[type=time]{width:110px}
-select{-webkit-appearance:none;appearance:none;min-width:90px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%236b6560' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center;background-size:10px;padding-right:26px}
-@media(prefers-color-scheme:dark){select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238a857c' stroke-width='1.5' fill='none'/%3E%3C/svg%3E")}}
-:root[data-theme=dark] select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238a857c' stroke-width='1.5' fill='none'/%3E%3C/svg%3E")}
-:root[data-theme=light] select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%236b6560' stroke-width='1.5' fill='none'/%3E%3C/svg%3E")}
-.field{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.unit{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:10px;color:var(--fm);font-weight:600;text-transform:uppercase;letter-spacing:.06em}
-.actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;align-items:center}
-#adv{flex-basis:100%;font-size:11px;color:var(--fm);padding-top:4px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;line-height:1.4;font-style:italic}
-.help{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border:1px solid var(--acc);font-size:9px;font-weight:700;color:var(--acc);margin-left:4px;cursor:pointer;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;background:var(--ah);transition:all var(--t);vertical-align:middle}
-.help:hover{background:var(--acc);color:#fff}
-.hint{margin-top:6px;padding:8px 12px;border-left:2px solid var(--acc);background:var(--ah);font-size:12.5px;line-height:1.5;color:var(--fm);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif}
-.card{border:1px solid var(--bd)}
-details.card{margin:0;border:none;border-bottom:1px solid var(--bd)}
-details.card>summary.sum{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:13px 28px;background:var(--sb);border-bottom:1px solid var(--bd)}
-details.card>summary.sum::-webkit-details-marker{display:none}
-details.card>summary.sum h2{margin:0}
-details.card>summary.sum:hover{background:var(--ah)}
-details[open]>summary.sum{border-bottom:2px solid var(--acc)}
-.chev{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:10px;color:var(--fm);width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--bd)}
-.chev:before{content:'▼'}
-details[open]>summary.sum .chev:before{content:'▲'}
-details.card .sec{border-bottom:none}
-pre{font-family:ui-monospace,'Courier New',monospace;font-size:11px;line-height:1.5;background:var(--bg);border:1px solid var(--bd);padding:12px;overflow:auto;white-space:pre-wrap;word-break:break-word}
-pre#logs{height:40vh}
-.overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.65);z-index:9999}
-.overlay .box{background:var(--sb);border:1px solid var(--bd);padding:20px 30px;color:var(--fg);text-align:center;min-width:240px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-weight:600;font-size:13px}
-/* compat classes not otherwise used */
-.row{display:flex;flex-wrap:wrap}.page{}.top{}.hero{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap}.brand{display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap}
-@media(max-width:768px){
-  .app{flex-direction:column}
-  .sidebar{width:100%;height:auto;position:sticky;top:0;z-index:40;flex-direction:column}
-  .sb-top{padding:10px 16px;border-bottom:1px solid var(--bd);display:flex;align-items:center;justify-content:space-between;gap:8px}
-  .sb-brand{margin:0;display:flex;align-items:center;gap:8px}
-  .subtitle{display:none}
-  .sb-nav{display:flex;flex-direction:row;overflow-x:auto;padding:0;border-bottom:1px solid var(--bd);-webkit-overflow-scrolling:touch;scrollbar-width:none;background:var(--sb)}
-  .sb-nav::-webkit-scrollbar{display:none}
-  .nav-item{white-space:nowrap;flex-shrink:0;padding:10px 14px;font-size:13px;border-left:none;border-bottom:3px solid transparent;border-right:1px solid var(--bd)}
-  .nav-item:last-child{border-right:none}
-  .nav-item.active{color:var(--acc);border-bottom-color:var(--acc);border-left-color:transparent;background:var(--ah)}
-  .sb-footer{display:none}
-  .sec{padding:16px}
-  td.k{width:38%;font-size:12px}
-  details.card>summary.sum{padding:12px 16px}
-}
-</style></head><body>
-<div id='ovr' class='overlay'><div class='box' id='ovr_msg'>Restarting…</div></div>
-<div class='app'>
-
-<!-- SIDEBAR -->
-<nav class='sidebar'>
-  <div class='sb-top'>
-    <div class='sb-brand'>
-      <img class='sb-logo' src='data:image/png;base64,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' alt=''>
-      <div><div class='title' id='t_title'>ESP32 RTSP Mic</div><span class='badge' id='fwv'></span></div>
-=======
 <!doctype html>
 <html lang="en">
   <head>
@@ -250,6 +130,38 @@ pre#logs{height:40vh}
         color: var(--bad);
         background: rgba(181, 41, 28, 0.08);
         border-color: rgba(181, 41, 28, 0.3);
+      }
+      .led-row {
+        display: flex;
+        gap: 20px;
+        padding: 8px 28px;
+        border-bottom: 1px solid var(--bd);
+        background: var(--sb);
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .led-item {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+      }
+      .led {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--bd);
+        flex-shrink: 0;
+        transition: background var(--t), box-shadow var(--t);
+      }
+      .led.ok   { background: var(--acc);  box-shadow: 0 0 5px var(--acc); }
+      .led.warn { background: var(--warn); box-shadow: 0 0 5px var(--warn); }
+      .led.bad  { background: var(--bad);  box-shadow: 0 0 5px var(--bad); }
+      .led-lbl {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--fm);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
       }
       .dirty {
         border-color: var(--bad) !important;
@@ -839,7 +751,6 @@ pre#logs{height:40vh}
   <body>
     <div id="ovr" class="overlay">
       <div class="box" id="ovr_msg">Restarting…</div>
->>>>>>> 8b6a057 (Mejora interface)
     </div>
     <div class="app">
       <!-- SIDEBAR -->
@@ -931,6 +842,12 @@ pre#logs{height:40vh}
 
       <!-- MAIN CONTENT -->
       <main class="content">
+        <!-- LED STATUS ROW -->
+        <div class="led-row">
+          <div class="led-item"><span class="led" id="led_rtsp"></span><span class="led-lbl">RTSP</span></div>
+          <div class="led-item"><span class="led" id="led_stream"></span><span class="led-lbl">Stream</span></div>
+          <div class="led-item"><span class="led" id="led_mqtt"></span><span class="led-lbl">MQTT</span></div>
+        </div>
         <!-- STATUS -->
         <section id="sec-status" class="sec">
           <div class="sec-title"><h2 id="t_status">Status</h2></div>
@@ -2755,6 +2672,10 @@ pre#logs{height:40vh}
             setToggleState(j.rtsp_server_enabled);
             $("client").textContent = j.client || "Waiting...";
             $("stream").innerHTML = fmtBool(j.streaming);
+            const ledRtsp = $("led_rtsp"), ledStream = $("led_stream"), ledMqtt = $("led_mqtt");
+            if (ledRtsp)   ledRtsp.className   = "led " + (j.rtsp_server_enabled ? "ok" : "bad");
+            if (ledStream) ledStream.className  = "led " + (j.streaming ? "ok" : "");
+            if (ledMqtt)   ledMqtt.className    = "led " + (!j.mqtt_enabled ? "" : j.mqtt_connected ? "ok" : "warn");
             $("rate").textContent = j.current_rate_pkt_s + " pkt/s";
             $("lcon").textContent = j.last_rtsp_connect;
             $("lplay").textContent = j.last_stream_start;
