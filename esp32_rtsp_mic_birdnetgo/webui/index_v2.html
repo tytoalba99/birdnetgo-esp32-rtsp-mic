@@ -131,19 +131,17 @@
         background: rgba(181, 41, 28, 0.08);
         border-color: rgba(181, 41, 28, 0.3);
       }
-      .led-row {
+      .sb-leds {
         display: flex;
-        gap: 20px;
-        padding: 8px 28px;
+        justify-content: space-around;
+        padding: 10px 14px;
         border-bottom: 1px solid var(--bd);
-        background: var(--sb);
-        align-items: center;
-        flex-wrap: wrap;
       }
       .led-item {
         display: flex;
+        flex-direction: column;
         align-items: center;
-        gap: 7px;
+        gap: 5px;
       }
       .led {
         width: 8px;
@@ -157,11 +155,11 @@
       .led.warn { background: var(--warn); box-shadow: 0 0 5px var(--warn); }
       .led.bad  { background: var(--bad);  box-shadow: 0 0 5px var(--bad); }
       .led-lbl {
-        font-size: 11px;
-        font-weight: 600;
+        font-size: 9px;
+        font-weight: 700;
         color: var(--fm);
         text-transform: uppercase;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.07em;
       }
       .dirty {
         border-color: var(--bad) !important;
@@ -804,6 +802,12 @@
             >
           </div>
         </div>
+        <div class="sb-leds">
+          <div class="led-item"><span class="led" id="led_rtsp"></span><span class="led-lbl">RTSP</span></div>
+          <div class="led-item"><span class="led" id="led_stream"></span><span class="led-lbl">Strm</span></div>
+          <div class="led-item"><span class="led" id="led_mqtt"></span><span class="led-lbl">MQTT</span></div>
+          <div class="led-item"><span class="led" id="led_therm"></span><span class="led-lbl">Thm</span></div>
+        </div>
         <div class="sb-nav">
           <a href="#sec-status" class="nav-item" data-sec="sec-status"
             >Status</a
@@ -842,12 +846,6 @@
 
       <!-- MAIN CONTENT -->
       <main class="content">
-        <!-- LED STATUS ROW -->
-        <div class="led-row">
-          <div class="led-item"><span class="led" id="led_rtsp"></span><span class="led-lbl">RTSP</span></div>
-          <div class="led-item"><span class="led" id="led_stream"></span><span class="led-lbl">Stream</span></div>
-          <div class="led-item"><span class="led" id="led_mqtt"></span><span class="led-lbl">MQTT</span></div>
-        </div>
         <!-- STATUS -->
         <section id="sec-status" class="sec">
           <div class="sec-title"><h2 id="t_status">Status</h2></div>
@@ -2672,10 +2670,11 @@
             setToggleState(j.rtsp_server_enabled);
             $("client").textContent = j.client || "Waiting...";
             $("stream").innerHTML = fmtBool(j.streaming);
-            const ledRtsp = $("led_rtsp"), ledStream = $("led_stream"), ledMqtt = $("led_mqtt");
+            const ledRtsp = $("led_rtsp"), ledStream = $("led_stream"), ledMqtt = $("led_mqtt"), ledTherm = $("led_therm");
             if (ledRtsp)   ledRtsp.className   = "led " + (j.rtsp_server_enabled ? "ok" : "bad");
             if (ledStream) ledStream.className  = "led " + (j.streaming ? "ok" : "");
             if (ledMqtt)   ledMqtt.className    = "led " + (!j.mqtt_enabled ? "" : j.mqtt_connected ? "ok" : "warn");
+            if (ledTherm)  ledTherm.className   = "led " + (!j.protection_enabled ? "" : j.sensor_fault ? "warn" : (j.manual_restart || j.latched || j.latched_persist) ? "bad" : "ok");
             $("rate").textContent = j.current_rate_pkt_s + " pkt/s";
             $("lcon").textContent = j.last_rtsp_connect;
             $("lplay").textContent = j.last_stream_start;
