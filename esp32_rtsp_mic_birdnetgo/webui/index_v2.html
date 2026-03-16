@@ -142,18 +142,41 @@
         flex-direction: column;
         align-items: center;
         gap: 5px;
+        position: relative;
+        cursor: default;
       }
-      .led {
-        width: 8px;
-        height: 8px;
+      .led-item::after {
+        content: attr(data-tip);
+        position: absolute;
+        bottom: calc(100% + 6px);
+        left: 50%;
+        transform: translateX(-50%);
+        background: var(--fg);
+        color: var(--bg);
+        font-size: 10px;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        white-space: nowrap;
+        padding: 3px 7px;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity var(--t);
+        z-index: 100;
+      }
+      .led-item:hover::after { opacity: 1; }
+      .led-item::before {
+        content: "";
+        display: block;
+        width: 10px;
+        height: 10px;
         border-radius: 50%;
-        background: var(--bd);
-        flex-shrink: 0;
-        transition: background var(--t), box-shadow var(--t);
+        background: var(--fm);
+        opacity: 0.5;
+        transition: background var(--t), box-shadow var(--t), opacity var(--t);
       }
-      .led.ok   { background: var(--acc);  box-shadow: 0 0 5px var(--acc); }
-      .led.warn { background: var(--warn); box-shadow: 0 0 5px var(--warn); }
-      .led.bad  { background: var(--bad);  box-shadow: 0 0 5px var(--bad); }
+      .led-item.ok::before   { background: var(--acc);  opacity: 1; box-shadow: 0 0 6px 1px var(--acc); }
+      .led-item.warn::before { background: var(--warn); opacity: 1; box-shadow: 0 0 6px 1px var(--warn); }
+      .led-item.bad::before  { background: var(--bad);  opacity: 1; box-shadow: 0 0 6px 1px var(--bad); }
+      .led-item.off::before  { background: var(--fm);   opacity: 0.4; box-shadow: none; }
       .led-lbl {
         font-size: 9px;
         font-weight: 700;
@@ -171,7 +194,7 @@
         min-height: 100vh;
       }
       .sidebar {
-        width: 265px;
+        width: 300px;
         flex-shrink: 0;
         background: var(--sb);
         border-right: 1px solid var(--bd);
@@ -803,10 +826,10 @@
           </div>
         </div>
         <div class="sb-leds">
-          <div class="led-item"><span class="led" id="led_rtsp"></span><span class="led-lbl">RTSP</span></div>
-          <div class="led-item"><span class="led" id="led_stream"></span><span class="led-lbl">Strm</span></div>
-          <div class="led-item"><span class="led" id="led_mqtt"></span><span class="led-lbl">MQTT</span></div>
-          <div class="led-item"><span class="led" id="led_therm"></span><span class="led-lbl">Thm</span></div>
+          <div class="led-item" id="led_rtsp"><span class="led-lbl">RTSP</span></div>
+          <div class="led-item" id="led_stream"><span class="led-lbl">Strm</span></div>
+          <div class="led-item" id="led_mqtt"><span class="led-lbl">MQTT</span></div>
+          <div class="led-item" id="led_therm"><span class="led-lbl">Thm</span></div>
         </div>
         <div class="sb-nav">
           <a href="#sec-status" class="nav-item" data-sec="sec-status"
@@ -2656,6 +2679,7 @@
           err.textContent = j.mqtt_last_error || "";
         }
       }
+      function setLed(el, cls, tip) { if (!el) return; el.className = "led-item " + cls; el.dataset.tip = tip; }
       function loadStatus() {
         fetch("/api/status", { cache: "no-store" })
           .then((r) => r.json())
@@ -2670,11 +2694,10 @@
             setToggleState(j.rtsp_server_enabled);
             $("client").textContent = j.client || "Waiting...";
             $("stream").innerHTML = fmtBool(j.streaming);
-            const ledRtsp = $("led_rtsp"), ledStream = $("led_stream"), ledMqtt = $("led_mqtt"), ledTherm = $("led_therm");
-            if (ledRtsp)   ledRtsp.className   = "led " + (j.rtsp_server_enabled ? "ok" : "bad");
-            if (ledStream) ledStream.className  = "led " + (j.streaming ? "ok" : "");
-            if (ledMqtt)   ledMqtt.className    = "led " + (!j.mqtt_enabled ? "" : j.mqtt_connected ? "ok" : "warn");
-            if (ledTherm)  ledTherm.className   = "led " + (!j.protection_enabled ? "" : j.sensor_fault ? "warn" : (j.manual_restart || j.latched || j.latched_persist) ? "bad" : "ok");
+            setLed($("led_rtsp"),   j.rtsp_server_enabled ? "ok" : "bad",  "RTSP Server: " + (j.rtsp_server_enabled ? "Enabled" : "Disabled"));
+            setLed($("led_stream"), j.rtsp_server_enabled ? (j.streaming ? "ok" : "off") : "off", "Streaming: " + (!j.rtsp_server_enabled ? "Server off" : j.streaming ? "Active" : "Idle"));
+            setLed($("led_mqtt"),   !j.mqtt_enabled ? "off" : j.mqtt_connected ? "ok" : "warn", "MQTT: " + (!j.mqtt_enabled ? "Disabled" : j.mqtt_connected ? "Connected" : "Disconnected"));
+            setLed($("led_therm"), "off", "Thermal: —");
             $("rate").textContent = j.current_rate_pkt_s + " pkt/s";
             $("lcon").textContent = j.last_rtsp_connect;
             $("lplay").textContent = j.last_stream_start;
@@ -3008,6 +3031,27 @@
                 last.textContent = L.therm_last_none;
               }
             }
+            // LED térmico: color por temperatura relativa al límite
+            const tempValid = j.current_valid && typeof j.current_c === "number" && isFinite(j.current_c);
+            const limit = Number(j.shutdown_c) || 80;
+            const temp = j.current_c;
+            let tCls, tTip;
+            if (!j.protection_enabled) {
+              tCls = "off"; tTip = "Thermal: Disabled";
+            } else if (j.sensor_fault) {
+              tCls = "warn"; tTip = "Thermal: Sensor fault";
+            } else if (j.latched || j.latched_persist || j.manual_restart) {
+              tCls = "bad"; tTip = "Thermal: Latched — acknowledge required";
+            } else if (!tempValid) {
+              tCls = "off"; tTip = "Thermal: No sensor";
+            } else if (temp >= limit - 5) {
+              tCls = "bad"; tTip = "Thermal: Critical " + temp.toFixed(1) + "°C / " + limit + "°C";
+            } else if (temp >= limit - 15) {
+              tCls = "warn"; tTip = "Thermal: Hot " + temp.toFixed(1) + "°C / " + limit + "°C";
+            } else {
+              tCls = "ok"; tTip = "Thermal: OK " + temp.toFixed(1) + "°C / " + limit + "°C";
+            }
+            setLed($("led_therm"), tCls, tTip);
           });
       }
       function loadLogs() {
