@@ -544,7 +544,7 @@ static bool mqttPublishDiscovery() {
     p = "{\"name\":\"Packet Rate\",\"uniq_id\":\"" + mqttDeviceId + "_pkt_rate\",\"stat_t\":\"" + st + "\",\"val_tpl\":\"{{ value_json.current_rate_pkt_s }}\",\"unit_of_meas\":\"pkt/s\",\"stat_cla\":\"measurement\",\"avty_t\":\"" + av + "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}";
     ok &= mqttPublishDiscoveryConfig("sensor", "packet_rate", p);
 
-    p = "{\"name\":\"Temperature\",\"uniq_id\":\"" + mqttDeviceId + "_temp_c\",\"stat_t\":\"" + st + "\",\"val_tpl\":\"{{ value_json.temperature_c }}\",\"unit_of_meas\":\"C\",\"dev_cla\":\"temperature\",\"stat_cla\":\"measurement\",\"ent_cat\":\"diagnostic\",\"avty_t\":\"" + av + "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}";
+    p = "{\"name\":\"Temperature\",\"uniq_id\":\"" + mqttDeviceId + "_temp_c\",\"stat_t\":\"" + st + "\",\"val_tpl\":\"{{ value_json.temperature_c }}\",\"unit_of_meas\":\"\\u00B0C\",\"dev_cla\":\"temperature\",\"stat_cla\":\"measurement\",\"ent_cat\":\"diagnostic\",\"avty_t\":\"" + av + "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}";
     ok &= mqttPublishDiscoveryConfig("sensor", "temperature_c", p);
 
     p = "{\"name\":\"Uptime\",\"uniq_id\":\"" + mqttDeviceId + "_uptime_s\",\"stat_t\":\"" + st + "\",\"val_tpl\":\"{{ value_json.uptime_s }}\",\"unit_of_meas\":\"s\",\"dev_cla\":\"duration\",\"stat_cla\":\"total_increasing\",\"ent_cat\":\"diagnostic\",\"avty_t\":\"" + av + "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}";
@@ -1119,12 +1119,28 @@ void checkDeepSleepSchedule() {
     }
     lastStreamStopReason = "Deep sleep outside stream schedule";
     lastStreamStopMs = millis();
-    mqttPublishState(true);
-    delay(40);
+    // Publish final state + mark offline, then cleanly close MQTT TCP socket.
+    // An open TCP connection prevents the WiFi modem from powering down during
+    // deep sleep, causing ~250 mW standby instead of near-zero consumption.
+    if (mqttClient.connected()) {
+        if (!mqttPublishState(true))
+            simplePrintln("Deep sleep: MQTT state publish failed (non-fatal).");
+        if (!mqttClient.publish(mqttAvailabilityTopic().c_str(), "offline", true))
+            simplePrintln("Deep sleep: MQTT offline publish failed (non-fatal), LWT will cover it.");
+        mqttClient.loop();  // flush TX buffer before closing socket
+        mqttClient.disconnect();
+        // 200 ms covers remote brokers (RTT up to ~100 ms) for a clean TCP
+        // FIN/ACK exchange; LWT is the fallback if the close does not complete.
+        delay(200);
+    }
+    // Shut down WiFi radio so the modem is fully off before deep sleep.
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    delay(100);  // allow modem hardware to power down
 
     esp_sleep_enable_timer_wakeup((uint64_t)sleepSec * 1000000ULL);
+    simplePrintln("WiFi off. Entering deep sleep now.");
     Serial.flush();
-    delay(30);
     esp_deep_sleep_start();
 }
 
