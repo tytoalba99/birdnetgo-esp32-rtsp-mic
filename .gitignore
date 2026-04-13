@@ -2,3 +2,4 @@ config_backup.json
 test_commit_67e0ef2.sh
 restore_config.sh
 .DS_Store
+.codex
