@@ -39,6 +39,54 @@ rtsp://<device-hostname>.local:8554/audio
 
 The default hostname is unique per device, for example `esp32mic-a1b2c3`.
 
+## OTA Update From The Web Flasher Firmware
+
+For a device that is already online and running Arduino OTA, you can reuse the public web flasher
+firmware and install it over the network.
+
+The web flasher publishes a full 4 MB flash image at `https://esp32mic.msmeteo.cz/firmware.bin`.
+For OTA, do not upload that full image directly. Extract the application image from offset `0x10000`
+and trim trailing `0xFF` padding:
+
+```bash
+curl -L https://esp32mic.msmeteo.cz/firmware.bin -o /tmp/esp32mic-web-firmware.bin
+
+dd if=/tmp/esp32mic-web-firmware.bin of=/tmp/esp32mic-web-app.bin \
+  bs=1 skip=65536 count=1310720 status=none
+
+APP_SIZE="$(perl -0777 -ne '$i=length($_)-1; $i-- while $i>=0 && substr($_,$i,1) eq "\xFF"; print $i+1' /tmp/esp32mic-web-app.bin)"
+
+dd if=/tmp/esp32mic-web-app.bin of=/tmp/esp32mic-web-ota.bin \
+  bs=1 count="${APP_SIZE}" status=none
+```
+
+Optional sanity check:
+
+```bash
+/root/.arduino15/packages/esp32/tools/esptool_py/5.1.0/esptool \
+  --chip esp32c6 image-info /tmp/esp32mic-web-ota.bin
+```
+
+Stop RTSP before the update, then upload with `espota.py`:
+
+```bash
+curl -X POST http://<device-ip>/api/action/server_stop \
+  -H "X-ESP32MIC-CSRF: 1"
+
+python3 /root/.arduino15/packages/esp32/hardware/esp32/3.3.7/tools/espota.py \
+  -i <device-ip> \
+  -p 3232 \
+  -a <ota-password> \
+  -f /tmp/esp32mic-web-ota.bin
+```
+
+If the currently installed firmware has no OTA password, omit `-a <ota-password>`. After reboot,
+verify the update:
+
+```bash
+curl http://<device-ip>/api/status
+```
+
 ## Wiring
 
 Tested hardware: **Seeed Studio XIAO ESP32-C6** + **ICS-43434** I2S microphone.
